@@ -1721,7 +1721,13 @@ function checkPenOverColor(pen) {
     if (noteData) {
         if (pen.userData.currentNote !== noteData.note && canChangeColor) {
             const wasPlaying = pen.userData.isPlaying;
+            const wasOverBlack = pen.userData.specialColor === 'black';
             const penId = pen.userData.originalId;  // Use physical pen ID, not mode ID!
+            
+            // If was over black, leave black mode first
+            if (wasOverBlack && audioEngine) {
+                audioEngine.penLeaveBlack(penId);
+            }
             
             // Pen entered new color
             pen.userData.currentNote = noteData.note;
@@ -1749,19 +1755,33 @@ function checkPenOverColor(pen) {
             }
         }
     } else if (specialColorData) {
-        // Over white or black - update screen but stop any audio (with cooldown)
+        // Over white or black - update screen, special audio for black
         if (pen.userData.specialColor !== specialColorData && canChangeColor) {
+            const penId = pen.userData.originalId;
+            const wasOverBlack = pen.userData.specialColor === 'black';
+            
             pen.userData.specialColor = specialColorData;
             pen.userData.lastColorChangeTime = now; // Start cooldown
             
-            // Stop audio if was playing
+            // Stop regular audio if was playing
             if (pen.userData.isPlaying) {
-                const penId = pen.userData.originalId;
                 pen.userData.currentNote = null;
                 pen.userData.isPlaying = false;
                 pen.userData.light.intensity = 0;
                 if (audioEngine) {
                     audioEngine.penLeave(penId);
+                }
+            }
+            
+            // Handle black area special sounds
+            if (audioEngine) {
+                if (wasOverBlack && specialColorData !== 'black') {
+                    // Left black area
+                    audioEngine.penLeaveBlack(penId);
+                }
+                if (specialColorData === 'black') {
+                    // Entered black area - trigger special sounds (cricket for drums)
+                    audioEngine.penEnterBlack(penId);
                 }
             }
             
@@ -1772,6 +1792,8 @@ function checkPenOverColor(pen) {
         if (pen.userData.isPlaying || pen.userData.specialColor) {
             // Pen left all colors/painting
             const penId = pen.userData.originalId;  // Use physical pen ID, not mode ID!
+            const wasOverBlack = pen.userData.specialColor === 'black';
+            
             pen.userData.currentNote = null;
             pen.userData.isPlaying = false;
             pen.userData.specialColor = null;
@@ -1784,6 +1806,9 @@ function checkPenOverColor(pen) {
             
             // Stop audio
             if (audioEngine) {
+                if (wasOverBlack) {
+                    audioEngine.penLeaveBlack(penId);
+                }
                 audioEngine.penLeave(penId);
             }
         }

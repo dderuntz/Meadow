@@ -22,6 +22,8 @@ export class StudioAudioEngine {
                 currentMode: i, // Track which mode is active
                 note: null,
                 frequency: null,
+                lastNote: null, // For resuming arpeggio on black
+                lastFrequency: null,
                 drum: this.createDrumState(),
                 bass: this.createBassState(),
                 arp: this.createArpState(),
@@ -31,6 +33,9 @@ export class StudioAudioEngine {
         
         this.drumKitLoader = null;
         this.drumBuffers = null;
+        this.cricketBuffer = null;
+        this.frogBuffer = null;
+        this.meadowlarkBuffer = null;
     }
     
     createDrumState() {
@@ -41,7 +46,9 @@ export class StudioAudioEngine {
             kitNumber: null,
             timeout: null,
             startTime: null,
-            currentStep: 0
+            currentStep: 0,
+            // Cricket mode (for black areas)
+            cricketMode: false
         };
     }
     
@@ -58,7 +65,11 @@ export class StudioAudioEngine {
             gain: null,
             pattern: this.createBassPattern(),
             timeout: null,
-            currentFrequency: null
+            currentFrequency: null,
+            // Frog mode (for black areas)
+            frogMode: false,
+            startTime: null,
+            currentStep: 0
         };
     }
     
@@ -72,7 +83,11 @@ export class StudioAudioEngine {
             frequencies: [],
             currentIndex: 0,
             timeout: null,
-            startTime: null
+            startTime: null,
+            // Over black - crystalline mode with chord progression
+            overBlack: false,
+            chordIndex: 0,
+            notesInChord: 0
         };
     }
     
@@ -89,7 +104,11 @@ export class StudioAudioEngine {
             filter: null,
             vibratoStarted: false,
             timeout: null,
-            currentFrequency: null
+            currentFrequency: null,
+            // Meadowlark mode (for black areas)
+            meadowlarkMode: false,
+            startTime: null,
+            currentStep: 0
         };
     }
 
@@ -113,6 +132,36 @@ export class StudioAudioEngine {
         // Load drum samples (shared by all pens in drum mode)
         this.drumKitLoader = new DrumKitLoader(this.audioContext);
         this.drumBuffers = await this.drumKitLoader.loadAll();
+        
+        // Load cricket chirp sample (for black areas - drums)
+        try {
+            const response = await fetch('audio/chirps.wav');
+            const arrayBuffer = await response.arrayBuffer();
+            this.cricketBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+        } catch (error) {
+            console.error('Error loading cricket sample:', error);
+            this.cricketBuffer = null;
+        }
+        
+        // Load frog sample (for black areas - bass)
+        try {
+            const response = await fetch('audio/frog.wav');
+            const arrayBuffer = await response.arrayBuffer();
+            this.frogBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+        } catch (error) {
+            console.error('Error loading frog sample:', error);
+            this.frogBuffer = null;
+        }
+        
+        // Load meadowlark sample (for black areas - vibrato/flute)
+        try {
+            const response = await fetch('audio/meadowlark_sm.m4a');
+            const arrayBuffer = await response.arrayBuffer();
+            this.meadowlarkBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+        } catch (error) {
+            console.error('Error loading meadowlark sample:', error);
+            this.meadowlarkBuffer = null;
+        }
         
         console.log('Studio audio engine initialized');
     }
@@ -170,6 +219,8 @@ export class StudioAudioEngine {
         
         penState.note = note;
         penState.frequency = frequency;
+        penState.lastNote = note; // Store for resuming on black
+        penState.lastFrequency = frequency;
         
         switch (modeId) {
             case 1: this.startDrums(penState.drum, note); break;
@@ -187,12 +238,81 @@ export class StudioAudioEngine {
         
         penState.note = null;
         penState.frequency = null;
+        penState.overBlack = false;
         
         switch (modeId) {
             case 1: this.stopDrums(penState.drum); break;
             case 2: this.stopBass(penState.bass); break;
             case 3: this.stopArpeggio(penState.arp); break;
             case 4: this.stopVibrato(penState.vib); break;
+        }
+    }
+    
+    // Called when pen enters a black area (special sounds)
+    async penEnterBlack(penId) {
+        await this.ensureAudioContext();
+        
+        const penState = this.penStates[penId];
+        const modeId = this.penModeMap[penId] || penId;
+        if (!penState) return;
+        
+        penState.overBlack = true;
+        
+        // For arpeggio mode, crystalline mode with chord progression
+        if (modeId === 3) {
+            penState.arp.overBlack = true;
+            penState.arp.chordIndex = 0;
+            penState.arp.notesInChord = 0;
+            // If not already playing, start it with last note/frequency
+            if (!penState.arp.active && penState.lastNote && penState.lastFrequency) {
+                this.startArpeggio(penState.arp, penState.lastNote, penState.lastFrequency);
+            }
+        }
+        // For other modes, stop current and start special sounds
+        else {
+            // Stop any current playing
+            if (penState.note) {
+                this.penLeave(penId);
+            }
+            
+            // For drum mode, play cricket (16 steps)
+            if (modeId === 1) {
+                this.startCricket(penState.drum);
+            }
+        // For bass mode, play frog (48 steps)
+        else if (modeId === 2) {
+            this.startFrog(penState.bass);
+        }
+        // For vibrato/flute mode, play meadowlark (64 steps)
+        else if (modeId === 4) {
+            this.startMeadowlark(penState.vib);
+        }
+        }
+    }
+    
+    // Called when pen leaves a black area
+    penLeaveBlack(penId) {
+        const penState = this.penStates[penId];
+        const modeId = this.penModeMap[penId] || penId;
+        if (!penState) return;
+        
+        penState.overBlack = false;
+        
+        if (modeId === 1) {
+            this.stopCricket(penState.drum);
+            this.stopDrums(penState.drum);
+        }
+        else if (modeId === 2) {
+            this.stopFrog(penState.bass);
+            this.stopBass(penState.bass);
+        }
+        else if (modeId === 3) {
+            // Arpeggio: clear overBlack flag, will speed back up on next scheduled note
+            penState.arp.overBlack = false;
+        }
+        else if (modeId === 4) {
+            this.stopMeadowlark(penState.vib);
+            this.stopVibrato(penState.vib);
         }
     }
 
@@ -204,6 +324,8 @@ export class StudioAudioEngine {
         
         penState.note = note;
         penState.frequency = frequency;
+        penState.lastNote = note; // Store for resuming on black
+        penState.lastFrequency = frequency;
         
         // Each instrument handles note changes differently
         switch (modeId) {
@@ -312,12 +434,205 @@ export class StudioAudioEngine {
 
     stopDrums(state) {
         state.active = false;
+        state.cricketMode = false;
         if (state.timeout) {
             clearTimeout(state.timeout);
             state.timeout = null;
         }
         state.startTime = null;
         state.currentStep = 0;
+    }
+
+    // ==================== CRICKET (black areas) ====================
+    
+    startCricket(state) {
+        state.active = true;
+        state.cricketMode = true;
+        state.startTime = this.audioContext.currentTime;
+        state.currentStep = 0;
+        
+        this.scheduleCricketStep(state);
+    }
+    
+    scheduleCricketStep(state) {
+        if (!state.active || !state.cricketMode) return;
+        
+        const beatDuration = 60 / this.bpm;
+        const sixteenthNote = beatDuration / 4;
+        const currentTime = this.audioContext.currentTime;
+        
+        // Pattern: •---|----|----|---- (chirp on step 0, then rest for 15 steps)
+        const stepInMeasure = state.currentStep % 16;
+        
+        const stepTime = state.startTime + (state.currentStep * sixteenthNote);
+        
+        if (stepTime >= currentTime - 0.05 && stepInMeasure === 0) {
+            this.playCricketChirp(state, Math.max(stepTime, currentTime));
+        }
+        
+        state.currentStep++;
+        
+        const nextStepTime = state.startTime + (state.currentStep * sixteenthNote);
+        const delay = (nextStepTime - currentTime) * 1000;
+        
+        if (state.timeout) clearTimeout(state.timeout);
+        
+        if (state.active && state.cricketMode && delay > 0) {
+            state.timeout = setTimeout(() => this.scheduleCricketStep(state), Math.min(delay, 5000));
+        } else if (state.active && state.cricketMode) {
+            state.timeout = setTimeout(() => this.scheduleCricketStep(state), 10);
+        }
+    }
+    
+    playCricketChirp(state, time) {
+        if (!this.cricketBuffer) return;
+        
+        const source = this.audioContext.createBufferSource();
+        const gain = this.audioContext.createGain();
+        
+        source.buffer = this.cricketBuffer;
+        gain.gain.setValueAtTime(state.volume, time);
+        
+        source.connect(gain);
+        gain.connect(this.audioContext.destination);
+        
+        source.start(time);
+    }
+    
+    stopCricket(state) {
+        state.cricketMode = false;
+        if (state.timeout) {
+            clearTimeout(state.timeout);
+            state.timeout = null;
+        }
+    }
+
+    // ==================== FROG (black areas for bass) ====================
+    
+    startFrog(state) {
+        state.active = true;
+        state.frogMode = true;
+        state.startTime = this.audioContext.currentTime;
+        state.currentStep = 0;
+        
+        this.scheduleFrogStep(state);
+    }
+    
+    scheduleFrogStep(state) {
+        if (!state.active || !state.frogMode) return;
+        
+        const beatDuration = 60 / this.bpm;
+        const sixteenthNote = beatDuration / 4;
+        const currentTime = this.audioContext.currentTime;
+        
+        // Pattern: 48 steps, frog on step 0, then rest for 47 steps
+        const stepInMeasure = state.currentStep % 48;
+        
+        const stepTime = state.startTime + (state.currentStep * sixteenthNote);
+        
+        if (stepTime >= currentTime - 0.05 && stepInMeasure === 0) {
+            this.playFrog(state, Math.max(stepTime, currentTime));
+        }
+        
+        state.currentStep++;
+        
+        const nextStepTime = state.startTime + (state.currentStep * sixteenthNote);
+        const delay = (nextStepTime - currentTime) * 1000;
+        
+        if (state.timeout) clearTimeout(state.timeout);
+        
+        if (state.active && state.frogMode && delay > 0) {
+            state.timeout = setTimeout(() => this.scheduleFrogStep(state), Math.min(delay, 5000));
+        } else if (state.active && state.frogMode) {
+            state.timeout = setTimeout(() => this.scheduleFrogStep(state), 10);
+        }
+    }
+    
+    playFrog(state, time) {
+        if (!this.frogBuffer) return;
+        
+        const source = this.audioContext.createBufferSource();
+        const gain = this.audioContext.createGain();
+        
+        source.buffer = this.frogBuffer;
+        gain.gain.setValueAtTime(state.volume, time);
+        
+        source.connect(gain);
+        gain.connect(this.audioContext.destination);
+        
+        source.start(time);
+    }
+    
+    stopFrog(state) {
+        state.frogMode = false;
+        if (state.timeout) {
+            clearTimeout(state.timeout);
+            state.timeout = null;
+        }
+    }
+
+    // ==================== MEADOWLARK (black areas for vibrato/flute) ====================
+    
+    startMeadowlark(state) {
+        state.active = true;
+        state.meadowlarkMode = true;
+        state.startTime = this.audioContext.currentTime;
+        state.currentStep = 0;
+        
+        this.scheduleMeadowlarkStep(state);
+    }
+    
+    scheduleMeadowlarkStep(state) {
+        if (!state.active || !state.meadowlarkMode) return;
+        
+        const beatDuration = 60 / this.bpm;
+        const sixteenthNote = beatDuration / 4;
+        const currentTime = this.audioContext.currentTime;
+        
+        // Pattern: 64 steps, meadowlark on step 0, then rest for 63 steps
+        const stepInMeasure = state.currentStep % 64;
+        
+        const stepTime = state.startTime + (state.currentStep * sixteenthNote);
+        
+        if (stepTime >= currentTime - 0.05 && stepInMeasure === 0) {
+            this.playMeadowlark(state, Math.max(stepTime, currentTime));
+        }
+        
+        state.currentStep++;
+        
+        const nextStepTime = state.startTime + (state.currentStep * sixteenthNote);
+        const delay = (nextStepTime - currentTime) * 1000;
+        
+        if (state.timeout) clearTimeout(state.timeout);
+        
+        if (state.active && state.meadowlarkMode && delay > 0) {
+            state.timeout = setTimeout(() => this.scheduleMeadowlarkStep(state), Math.min(delay, 5000));
+        } else if (state.active && state.meadowlarkMode) {
+            state.timeout = setTimeout(() => this.scheduleMeadowlarkStep(state), 10);
+        }
+    }
+    
+    playMeadowlark(state, time) {
+        if (!this.meadowlarkBuffer) return;
+        
+        const source = this.audioContext.createBufferSource();
+        const gain = this.audioContext.createGain();
+        
+        source.buffer = this.meadowlarkBuffer;
+        gain.gain.setValueAtTime(state.volume, time);
+        
+        source.connect(gain);
+        gain.connect(this.audioContext.destination);
+        
+        source.start(time);
+    }
+    
+    stopMeadowlark(state) {
+        state.meadowlarkMode = false;
+        if (state.timeout) {
+            clearTimeout(state.timeout);
+            state.timeout = null;
+        }
     }
 
     // ==================== BASS ====================
@@ -398,6 +713,7 @@ export class StudioAudioEngine {
 
     stopBass(state) {
         state.active = false;
+        state.frogMode = false;
         if (state.timeout) {
             clearTimeout(state.timeout);
             state.timeout = null;
@@ -425,15 +741,43 @@ export class StudioAudioEngine {
         this.scheduleArpeggioNote(state);
     }
 
+    // Dreamy chord progression for crystalline mode (relative to C4 = 261.63 Hz)
+    getCrystallineChordFrequencies(chordIndex) {
+        // Pretty progression: Cmaj7 -> Am7 -> Fmaj7 -> G7sus4
+        const chords = [
+            [261.63, 329.63, 392.00, 493.88],  // Cmaj7: C E G B
+            [220.00, 261.63, 329.63, 392.00],  // Am7: A C E G
+            [174.61, 220.00, 261.63, 329.63],  // Fmaj7: F A C E
+            [196.00, 261.63, 293.66, 392.00],  // G7sus4: G C D G
+        ];
+        return chords[chordIndex % chords.length];
+    }
+    
     scheduleArpeggioNote(state) {
         if (!state.active || !state.frequencies.length) return;
         
         const beatDuration = 60 / this.bpm;
-        const noteInterval = beatDuration / 4; // 4 notes per beat
+        // Over black: half speed (double interval) - 2 notes per beat instead of 4
+        const noteInterval = state.overBlack ? beatDuration / 2 : beatDuration / 4;
         const currentTime = this.audioContext.currentTime;
         
         const noteTime = state.startTime + (state.currentIndex * noteInterval);
-        const freq = state.frequencies[state.currentIndex % state.frequencies.length];
+        
+        let freq;
+        if (state.overBlack) {
+            // Crystalline mode: wander through chord progression
+            const chordFreqs = this.getCrystallineChordFrequencies(state.chordIndex);
+            freq = chordFreqs[state.notesInChord % chordFreqs.length];
+            
+            state.notesInChord++;
+            // Change chord every 8 notes
+            if (state.notesInChord >= 8) {
+                state.notesInChord = 0;
+                state.chordIndex++;
+            }
+        } else {
+            freq = state.frequencies[state.currentIndex % state.frequencies.length];
+        }
         
         if (noteTime >= currentTime - 0.05) {
             this.playArpeggioNote(state, Math.max(noteTime, currentTime), freq);
@@ -455,27 +799,84 @@ export class StudioAudioEngine {
 
     playArpeggioNote(state, time, frequency) {
         const shiftedFreq = frequency * Math.pow(2, state.octaveShift);
-        const decayTime = 0.05 + (state.sustain * 0.95);
         
-        const oscillator = this.audioContext.createOscillator();
-        const gainNode = this.audioContext.createGain();
-        
-        oscillator.type = 'sine';
-        oscillator.frequency.value = shiftedFreq;
-        
-        gainNode.gain.setValueAtTime(0, time);
-        gainNode.gain.linearRampToValueAtTime(state.volume * 0.5, time + 0.002);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, time + decayTime);
-        
-        oscillator.connect(gainNode);
-        gainNode.connect(this.audioContext.destination);
-        
-        oscillator.start(time);
-        oscillator.stop(time + decayTime + 0.1);
+        if (state.overBlack) {
+            // Crystalline mode: softer, shimmer, longer decay, wandering chords
+            const crystalFreq = frequency; // Use the chord frequency directly (already correct pitch)
+            const decayTime = 1.2 + (state.sustain * 1.5); // Longer, ethereal decay
+            const vol = state.volume * 0.4; // Quieter, softer
+            
+            // Main tone
+            const osc1 = this.audioContext.createOscillator();
+            const gain1 = this.audioContext.createGain();
+            osc1.type = 'sine'; // Softer than triangle
+            osc1.frequency.value = crystalFreq;
+            
+            // Shimmer tone (slightly detuned for chorus effect)
+            const osc2 = this.audioContext.createOscillator();
+            const gain2 = this.audioContext.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.value = crystalFreq * 1.002; // Subtle detune
+            
+            // High harmonic for sparkle (quieter)
+            const osc3 = this.audioContext.createOscillator();
+            const gain3 = this.audioContext.createGain();
+            osc3.type = 'sine';
+            osc3.frequency.value = crystalFreq * 2; // Octave up
+            
+            // Soft envelopes with slow attack
+            gain1.gain.setValueAtTime(0, time);
+            gain1.gain.linearRampToValueAtTime(vol * 0.5, time + 0.02);
+            gain1.gain.exponentialRampToValueAtTime(0.01, time + decayTime);
+            
+            gain2.gain.setValueAtTime(0, time);
+            gain2.gain.linearRampToValueAtTime(vol * 0.3, time + 0.03);
+            gain2.gain.exponentialRampToValueAtTime(0.01, time + decayTime * 0.9);
+            
+            gain3.gain.setValueAtTime(0, time);
+            gain3.gain.linearRampToValueAtTime(vol * 0.1, time + 0.01);
+            gain3.gain.exponentialRampToValueAtTime(0.01, time + decayTime * 0.5);
+            
+            osc1.connect(gain1);
+            osc2.connect(gain2);
+            osc3.connect(gain3);
+            gain1.connect(this.audioContext.destination);
+            gain2.connect(this.audioContext.destination);
+            gain3.connect(this.audioContext.destination);
+            
+            osc1.start(time);
+            osc2.start(time);
+            osc3.start(time);
+            osc1.stop(time + decayTime + 0.1);
+            osc2.stop(time + decayTime + 0.1);
+            osc3.stop(time + decayTime + 0.1);
+        } else {
+            // Normal mode
+            const decayTime = 0.05 + (state.sustain * 0.95);
+            
+            const oscillator = this.audioContext.createOscillator();
+            const gainNode = this.audioContext.createGain();
+            
+            oscillator.type = 'sine';
+            oscillator.frequency.value = shiftedFreq;
+            
+            gainNode.gain.setValueAtTime(0, time);
+            gainNode.gain.linearRampToValueAtTime(state.volume * 0.5, time + 0.002);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, time + decayTime);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(this.audioContext.destination);
+            
+            oscillator.start(time);
+            oscillator.stop(time + decayTime + 0.1);
+        }
     }
 
     stopArpeggio(state) {
         state.active = false;
+        state.overBlack = false;
+        state.chordIndex = 0;
+        state.notesInChord = 0;
         if (state.timeout) {
             clearTimeout(state.timeout);
             state.timeout = null;
@@ -590,6 +991,7 @@ export class StudioAudioEngine {
 
     stopVibrato(state) {
         state.active = false;
+        state.meadowlarkMode = false;
         if (state.timeout) {
             clearTimeout(state.timeout);
             state.timeout = null;
