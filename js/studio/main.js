@@ -781,33 +781,92 @@ function createPens() {
         topBody.userData.penHeight = penHeight;
         penGroup.add(topBody);
         
-        // Black screen cap on top of pen with number
+        // Glowing screen with glass bubble dome
         const topCapRadius = penRadius - topBevelRadius; // Inner radius at top of bevel
-        const topCapGeo = new THREE.CircleGeometry(topCapRadius, 32);
+        const glassHeight = 0.06; // Height of the dome
+        const glassFloat = 0.01; // Tiny gap above screen
         
-        // Create canvas texture with emoji
+        // SCREEN - flush with pen top, emissive
+        const screenGeo = new THREE.CircleGeometry(topCapRadius, 32);
+        
+        // Create canvas texture with emoji on darker background (for emissive)
         const canvas = document.createElement('canvas');
         canvas.width = 128;
         canvas.height = 128;
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#111111';
+        ctx.fillStyle = '#8a9496'; // Darker grey-blue for emissive screen
         ctx.fillRect(0, 0, 128, 128);
         ctx.font = '72px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#222222'; // Dark emoji
         ctx.fillText(config.emoji, 64, 68);
         
-        const capTexture = new THREE.CanvasTexture(canvas);
+        const screenTexture = new THREE.CanvasTexture(canvas);
         
-        const topCapMat = new THREE.MeshStandardMaterial({
-            map: capTexture,
-            roughness: 0.3,
-            metalness: 0.0
+        const screenMat = new THREE.MeshStandardMaterial({
+            map: screenTexture,
+            roughness: 0.4,
+            metalness: 0.0,
+            emissive: 0xffffff,
+            emissiveMap: screenTexture,
+            emissiveIntensity: 0.15 // Subtle glow
         });
-        const topCap = new THREE.Mesh(topCapGeo, topCapMat);
-        topCap.rotation.x = -Math.PI / 2; // Face up
-        topCap.position.y = penHeight; // At the very top
-        penGroup.add(topCap);
+        const screen = new THREE.Mesh(screenGeo, screenMat);
+        screen.rotation.x = -Math.PI / 2; // Face up
+        screen.position.y = penHeight; // Flush with top
+        penGroup.add(screen);
+        
+        // GLASS DOME LENS - solid lens shape with thickness
+        const domeSegments = 16;
+        const lensThickness = 0.025; // Thickness at the edge
+        const glassPoints = [];
+        
+        // Start at center bottom (inside of lens)
+        glassPoints.push(new THREE.Vector2(0, 0));
+        
+        // Bottom surface - flat or very slightly curved
+        glassPoints.push(new THREE.Vector2(topCapRadius * 0.95, 0));
+        
+        // Edge/side wall
+        glassPoints.push(new THREE.Vector2(topCapRadius, 0));
+        glassPoints.push(new THREE.Vector2(topCapRadius, lensThickness));
+        
+        // Top dome surface - curve from edge up to center peak
+        for (let j = domeSegments; j >= 0; j--) {
+            const t = j / domeSegments;
+            const r = t * topCapRadius;
+            const h = lensThickness + (1 - t * t) * glassHeight; // Dome above the edge thickness
+            glassPoints.push(new THREE.Vector2(r, h));
+        }
+        
+        const glassGeo = new THREE.LatheGeometry(glassPoints, 32);
+        
+        const glassMat = new THREE.MeshPhysicalMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.3,
+            roughness: 0.0, // Super glossy
+            metalness: 0.0,
+            transmission: 0.85,
+            thickness: 0.05,
+            ior: 1.5,
+            envMapIntensity: 0.8, // Catch reflections
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.0
+        });
+        const glassDome = new THREE.Mesh(glassGeo, glassMat);
+        glassDome.position.y = penHeight + glassFloat; // Float just above screen
+        penGroup.add(glassDome);
+        
+        // Keep references for updates
+        const topCap = screen;
+        screen.userData.isScreen = true; // Tag for glow slider
+        screen.userData.canvas = canvas;
+        screen.userData.ctx = ctx;
+        screen.userData.texture = screenTexture;
+        screen.userData.emoji = config.emoji;
+        screen.userData.defaultColor = '#8a9496';
         
         // Glass/plastic washer at the bottom
         const washerOuterRadius = penRadius * 0.85;
@@ -1036,6 +1095,23 @@ function setupLightingControls() {
         });
     }
     
+    // Screen glow slider
+    const screenGlowSlider = document.getElementById('screenGlowSlider');
+    const screenGlowValue = document.getElementById('screenGlowValue');
+    if (screenGlowSlider) {
+        screenGlowSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            screenGlowValue.textContent = value.toFixed(2);
+            
+            pens.forEach(pen => {
+                pen.traverse(child => {
+                    if (child.userData && child.userData.isScreen && child.material) {
+                        child.material.emissiveIntensity = value;
+                    }
+                });
+            });
+        });
+    }
 }
 
 function rebakeCubeCamera() {
@@ -1342,6 +1418,45 @@ function updatePenHeights() {
     });
 }
 
+function updateScreenColor(pen, hue) {
+    // Find the screen mesh and update its background color based on hue
+    pen.traverse(child => {
+        if (child.userData && child.userData.isScreen) {
+            const ctx = child.userData.ctx;
+            const canvas = child.userData.canvas;
+            const texture = child.userData.texture;
+            const emoji = child.userData.emoji;
+            
+            if (ctx && canvas && texture) {
+                // Redraw with new background color from hue
+                if (hue !== null && hue !== undefined) {
+                    // Use the sensed hue - slightly muted for screen look
+                    ctx.fillStyle = `hsl(${hue}, 50%, 40%)`;
+                    // Update emissive to match sensed color
+                    if (child.material && child.material.emissive) {
+                        child.material.emissive.setHSL(hue / 360, 0.5, 0.25);
+                    }
+                } else {
+                    // Default grey when not sensing
+                    ctx.fillStyle = child.userData.defaultColor;
+                    // Reset emissive to default grey
+                    if (child.material && child.material.emissive) {
+                        child.material.emissive.set(0x8a9496);
+                    }
+                }
+                ctx.fillRect(0, 0, 128, 128);
+                ctx.font = '72px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#222222';
+                ctx.fillText(emoji, 64, 68);
+                
+                texture.needsUpdate = true;
+            }
+        }
+    });
+}
+
 function checkPenOverColor(pen) {
     // Adjust pen height based on surface
     adjustPenHeight(pen);
@@ -1419,6 +1534,10 @@ function checkPenOverColor(pen) {
             pen.userData.currentNote = noteData.note;
             pen.userData.isPlaying = true;
             
+            // Update screen to show sensed color
+            const screenHue = noteData.sampledHue !== undefined ? noteData.sampledHue * 360 : noteData.hue;
+            updateScreenColor(pen, screenHue);
+            
             // Turn on pen light
             pen.userData.light.intensity = penLightIntensity;
             
@@ -1439,6 +1558,9 @@ function checkPenOverColor(pen) {
             const penId = pen.userData.originalId;  // Use physical pen ID, not mode ID!
             pen.userData.currentNote = null;
             pen.userData.isPlaying = false;
+            
+            // Reset screen to default color
+            updateScreenColor(pen, null);
             
             // Turn off pen light
             pen.userData.light.intensity = 0;
