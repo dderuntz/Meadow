@@ -118,11 +118,16 @@ const PEN_MODES = [
 ];
 
 // Pen configurations - all purple, same pen with 4 modes
+// Defaults: 3 pens tipped on table, 1 (fairy) standing on paper playing
 const PEN_CONFIGS = [
-    { id: 1, name: 'Drum', color: 0xb388eb, x: -4, emoji: '🥁', modeIndex: 0 },
-    { id: 2, name: 'Frog', color: 0xb388eb, x: -1.5, emoji: '🐸', modeIndex: 1 },
-    { id: 3, name: 'Fairy', color: 0xb388eb, x: 1.5, emoji: '🧚', modeIndex: 2 },
-    { id: 4, name: 'Robin', color: 0xb388eb, x: 4, emoji: '🐦', modeIndex: 3 }
+    { id: 1, name: 'Drum', color: 0xb388eb, emoji: '🥁', modeIndex: 0, 
+      defaultX: 0.2, defaultZ: -7.7, tipped: true },
+    { id: 2, name: 'Frog', color: 0xb388eb, emoji: '🐸', modeIndex: 1,
+      defaultX: 7.4, defaultZ: -7.0, tipped: true },
+    { id: 3, name: 'Fairy', color: 0xb388eb, emoji: '🧚', modeIndex: 2,
+      defaultX: -5.0, defaultZ: 6.5, tipped: false }, // Standing in white gap - requires drag to play
+    { id: 4, name: 'Robin', color: 0xb388eb, emoji: '🐦', modeIndex: 3,
+      defaultX: 5.4, defaultZ: 8.7, tipped: true }
 ];
 
 // Track mouse position for click detection
@@ -138,7 +143,7 @@ function init() {
     
     // Camera - looking down at paper at an angle
     camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(-2.4, 14.9, 16.1);
+    camera.position.set(-3.6, 13.4, 17.0);
     
     // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -190,7 +195,7 @@ function init() {
     controls.maxPolarAngle = Math.PI / 2.2; // Don't let camera go below paper
     controls.minDistance = 10;
     controls.maxDistance = 40;
-    controls.target.set(2.9, 1.6, 3.7); // Look at this point
+    controls.target.set(3.4, 0.9, 4.5); // Look at this point
     
     // Raycaster for pen interaction
     raycaster = new THREE.Raycaster();
@@ -778,9 +783,32 @@ function createPens() {
         penLight.position.y = -washerHeight - 0.05; // Below the washer to illuminate table
         penGroup.add(penLight);
         
-        // Position pen (raised so washer doesn't clip table)
-        const penBaseHeight = 0.6 + washerHeight;
-        penGroup.position.set(config.x, penBaseHeight, -PAPER_HEIGHT / 2 - 2);
+        // Position pen based on default config
+        const tableHeight = 0.3;
+        const penBaseHeight = 0.6;
+        const tippedHeight = tableHeight + 0.9; // Height when laying on side
+        
+        if (config.tipped) {
+            // Start tipped on table with random rotation (east-southeast range)
+            const eseAngle = Math.PI / 8;
+            const variation = (Math.random() - 0.5) * (Math.PI / 6);
+            const randomRot = eseAngle + variation;
+            
+            penGroup.position.set(config.defaultX, tippedHeight, config.defaultZ);
+            penGroup.rotation.x = Math.PI / 2; // Lay flat
+            penGroup.rotation.z = randomRot;
+            penGroup.userData.tippedOver = true;
+            penGroup.userData.targetRotationX = Math.PI / 2;
+            penGroup.userData.targetRotationZ = randomRot;
+            penGroup.userData.targetY = tippedHeight;
+        } else {
+            // Start standing on paper
+            penGroup.position.set(config.defaultX, penBaseHeight + 0.25, config.defaultZ); // 0.25 = paper height
+            penGroup.userData.tippedOver = false;
+            penGroup.userData.targetRotationX = 0;
+            penGroup.userData.targetRotationZ = 0;
+            penGroup.userData.targetY = penBaseHeight + 0.25;
+        }
         penGroup.userData = {
             type: 'pen',
             id: config.id,
@@ -975,7 +1003,11 @@ function onMouseDown(event) {
     if (intersects.length > 0) {
         const clickedPen = intersects[0].object.parent;
         draggedPen = clickedPen;
+        draggedPen.userData.isHeld = true; // Pen is being held - stay upright
         controls.enabled = false; // Disable orbit controls while dragging
+        
+        // Immediately start standing up if it was tipped over
+        adjustPenHeight(draggedPen);
     }
 }
 
@@ -1012,6 +1044,11 @@ function onMouseUp(event) {
         if (!isDragging) {
             cyclePenMode(draggedPen);
         }
+        
+        // Release the pen - it may tip over if on table
+        draggedPen.userData.isHeld = false;
+        adjustPenHeight(draggedPen); // Recalculate - will tip if on table
+        
         controls.enabled = true;
         draggedPen = null;
     }
@@ -1103,10 +1140,13 @@ function adjustPenHeight(pen) {
     
     // Check paper
     let surfaceY = tableHeight;
+    let onSurface = false; // true if over paper or painting
+    
     if (paper) {
         const paperHits = downRay.intersectObject(paper);
         if (paperHits.length > 0) {
             surfaceY = Math.max(surfaceY, paperHits[0].point.y);
+            onSurface = true;
         }
     }
     
@@ -1115,24 +1155,117 @@ function adjustPenHeight(pen) {
         const frameHits = downRay.intersectObject(paintingFrame);
         if (frameHits.length > 0) {
             surfaceY = Math.max(surfaceY, frameHits[0].point.y);
+            onSurface = true;
         }
     }
     
-    // Set target height (lerped in animate loop)
-    pen.userData.targetY = surfaceY + basePenHeight;
+    // Store surface info for later use
+    pen.userData.onSurface = onSurface;
+    pen.userData.surfaceY = surfaceY;
     
-    // Initialize current Y if not set
+    // If being held/dragged, always stay upright
+    if (pen.userData.isHeld) {
+        pen.userData.targetY = surfaceY + basePenHeight;
+        pen.userData.targetRotationX = 0;
+        pen.userData.tippedOver = false;
+        // Reset velocities when picked up
+        pen.userData.velocityY = 0;
+        pen.userData.velocityRotX = 0;
+    } else if (onSurface) {
+        // Standing upright on paper/painting
+        pen.userData.targetY = surfaceY + basePenHeight;
+        pen.userData.targetRotationX = 0;
+        pen.userData.tippedOver = false;
+    } else {
+        // Laying on side on table (only when released)
+        const penRadius = 0.9; // Pen radius when laying down - a bit higher off table
+        pen.userData.targetY = tableHeight + penRadius;
+        
+        // Pen lays flat (X = 90 degrees exactly)
+        // Only set random direction once when first tipping
+        if (!pen.userData.tippedOver) {
+            pen.userData.targetRotationX = Math.PI / 2; // Exactly 90 degrees - flat
+            
+            // Mostly point east-southeast (toward the light) with some variation
+            const eseAngle = Math.PI / 8; // 22.5 degrees = east-southeast
+            const variation = (Math.random() - 0.5) * (Math.PI / 6); // +/- 15 degrees (30 degree range)
+            pen.userData.targetRotationZ = eseAngle + variation;
+            
+            // Give it initial drop velocity for bounce
+            pen.userData.velocityY = -0.1;
+        }
+        pen.userData.tippedOver = true;
+    }
+    
+    // Initialize if not set
     if (pen.userData.targetY !== undefined && pen.position.y < 0.1) {
         pen.position.y = pen.userData.targetY;
     }
+    if (pen.userData.targetRotationX === undefined) {
+        pen.userData.targetRotationX = 0;
+    }
 }
 
-// Lerp pen heights towards targets
+// Lerp pen heights and rotations towards targets (with bounce for drops)
 function updatePenHeights() {
-    const lerpFactor = 0.15; // Adjust for faster/slower easing
+    const lerpFactor = 0.12;
+    const bounceDamping = 0.15; // Low bounce - hard landing
+    const gravity = 0.06; // Fast drop
+    
     pens.forEach(pen => {
-        if (pen.userData.targetY !== undefined) {
-            pen.position.y += (pen.userData.targetY - pen.position.y) * lerpFactor;
+        if (pen.userData.tippedOver && !pen.userData.isHeld) {
+            // Physics-based bounce for tipped pens
+            const floorY = pen.userData.targetY || 0.8;
+            const targetRotX = pen.userData.targetRotationX || Math.PI / 2;
+            
+            // Initialize velocity if needed
+            if (pen.userData.velocityY === undefined) pen.userData.velocityY = 0;
+            
+            // Check if on floor FIRST
+            const onFloor = pen.position.y <= floorY;
+            
+            if (onFloor) {
+                // ON THE FLOOR
+                pen.position.y = floorY; // Hard clamp
+                
+                // Bounce if coming down fast enough
+                if (pen.userData.velocityY < -0.005) {
+                    pen.userData.velocityY = Math.abs(pen.userData.velocityY) * bounceDamping;
+                } else {
+                    pen.userData.velocityY = 0; // Come to rest
+                }
+            } else {
+                // IN THE AIR - apply gravity and move
+                pen.userData.velocityY -= gravity;
+                pen.position.y += pen.userData.velocityY;
+                
+                // Safety clamp - never go below floor
+                if (pen.position.y < floorY) {
+                    pen.position.y = floorY;
+                }
+            }
+            
+            // Tip rotation - simple lerp
+            pen.rotation.x += (targetRotX - pen.rotation.x) * 0.15;
+            
+            // Lerp Z rotation to target (random compass direction)
+            if (pen.userData.targetRotationZ !== undefined) {
+                pen.rotation.z += (pen.userData.targetRotationZ - pen.rotation.z) * lerpFactor;
+            }
+            
+            // Y rotation stays 0
+            pen.rotation.y += (0 - pen.rotation.y) * lerpFactor;
+        } else {
+            // Normal lerp for held or upright pens
+            if (pen.userData.targetY !== undefined) {
+                pen.position.y += (pen.userData.targetY - pen.position.y) * lerpFactor;
+            }
+            if (pen.userData.targetRotationX !== undefined) {
+                pen.rotation.x += (pen.userData.targetRotationX - pen.rotation.x) * lerpFactor;
+            }
+            // Reset Y and Z rotation when standing upright
+            pen.rotation.y += (0 - pen.rotation.y) * lerpFactor;
+            pen.rotation.z += (0 - pen.rotation.z) * lerpFactor;
         }
     });
 }
@@ -1264,7 +1397,10 @@ function animate() {
         lastCameraUpdate = currentTime;
         const camInfo = document.getElementById('cameraInfo');
         if (camInfo) {
-            camInfo.innerHTML = `Cam pos: ${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)}<br>Cam target: ${controls.target.x.toFixed(1)}, ${controls.target.y.toFixed(1)}, ${controls.target.z.toFixed(1)}`;
+            const rotX = (camera.rotation.x * 180 / Math.PI).toFixed(1);
+            const rotY = (camera.rotation.y * 180 / Math.PI).toFixed(1);
+            const rotZ = (camera.rotation.z * 180 / Math.PI).toFixed(1);
+            camInfo.innerHTML = `Cam pos: ${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)}<br>Cam target: ${controls.target.x.toFixed(1)}, ${controls.target.y.toFixed(1)}, ${controls.target.z.toFixed(1)}<br>Cam rot: ${rotX}°, ${rotY}°, ${rotZ}°`;
         }
     }
     
