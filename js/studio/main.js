@@ -6,6 +6,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { StudioAudioEngine } from './audio-adapter.js';
 
 // Scene globals
@@ -32,7 +34,7 @@ let paintingGroup = null;
 let paintingFrame = null; // Reference for thickness control
 
 // Post-processing
-let composer, colorCorrectionPass;
+let composer, colorCorrectionPass, bloomPass;
 const colorCorrectionShader = {
     uniforms: {
         tDiffuse: { value: null },
@@ -88,6 +90,13 @@ let tableTexture; // For wood texture controls
 let tableMaterial; // For polish control
 let woodContrastUniform = { value: 1.2 }; // Wood texture contrast
 let penLightIntensity = 1.5; // Base intensity for pen lights
+let screenGlowIntensity = 0.15; // Screen glow intensity (emissive)
+let screenLightIntensity = 2.0; // Screen RectAreaLight intensity
+
+// Default camera position and target
+const DEFAULT_CAMERA_POS = new THREE.Vector3(-3.6, 13.4, 17.0);
+const DEFAULT_CAMERA_TARGET = new THREE.Vector3(3.4, 0.9, 4.5);
+let isResettingCamera = false;
 
 // Paper dimensions (roughly A4 proportions)
 const PAPER_WIDTH = 12;
@@ -120,13 +129,13 @@ const PEN_MODES = [
 // Pen configurations - all purple, same pen with 4 modes
 // Defaults: 3 pens tipped on table, 1 (fairy) standing on paper playing
 const PEN_CONFIGS = [
-    { id: 1, name: 'Drum', color: 0xb388eb, emoji: '🥁', modeIndex: 0, 
+    { id: 1, name: 'Drum', color: 0xd5dee0, emoji: '🥁', modeIndex: 0, 
       defaultX: 0.2, defaultZ: -7.7, tipped: true },
-    { id: 2, name: 'Frog', color: 0xb388eb, emoji: '🐸', modeIndex: 1,
+    { id: 2, name: 'Frog', color: 0xd5dee0, emoji: '🐸', modeIndex: 1,
       defaultX: 7.4, defaultZ: -7.0, tipped: true },
-    { id: 3, name: 'Fairy', color: 0xb388eb, emoji: '🧚', modeIndex: 2,
+    { id: 3, name: 'Fairy', color: 0xd5dee0, emoji: '🧚', modeIndex: 2,
       defaultX: -5.0, defaultZ: 6.5, tipped: false }, // Standing in white gap - requires drag to play
-    { id: 4, name: 'Robin', color: 0xb388eb, emoji: '🐦', modeIndex: 3,
+    { id: 4, name: 'Robin', color: 0xd5dee0, emoji: '🐦', modeIndex: 3,
       defaultX: 5.4, defaultZ: 8.7, tipped: true }
 ];
 
@@ -155,10 +164,22 @@ function init() {
     renderer.toneMappingExposure = 0.7;
     document.body.appendChild(renderer.domElement);
     
+    // Initialize RectAreaLight support
+    RectAreaLightUniformsLib.init();
+    
     // Post-processing setup
     composer = new EffectComposer(renderer);
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
+    
+    // Bloom pass for screen glow effect
+    bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        0.15,  // strength
+        0.4,   // radius
+        0.89   // threshold
+    );
+    composer.addPass(bloomPass);
     
     colorCorrectionPass = new ShaderPass(colorCorrectionShader);
     composer.addPass(colorCorrectionPass);
@@ -279,7 +300,7 @@ function setupLighting() {
     
     // Main directional light (sun-like)
     mainLight = new THREE.DirectionalLight(0xffffff, 1.7);
-    mainLight.position.set(-15, 20, 30);
+    mainLight.position.set(-19, 26, 30);
     mainLight.castShadow = true;
     mainLight.shadow.mapSize.width = 4096;
     mainLight.shadow.mapSize.height = 4096;
@@ -313,6 +334,7 @@ function createPaper() {
     paper.castShadow = true;
     paper.position.y = 0.3;
     paper.scale.y = 0.6; // Default thickness
+    paper.userData = { type: 'paperBase' }; // Mark as paper for white detection
     paperGroup.add(paper);
     
     // Mary Had a Little Lamb song pattern - no gaps between rows
@@ -667,76 +689,213 @@ function createPens() {
         const topBevelSegments = 8;
         const bottomBevelSegments = 4;
         
-        // Create pen body with beveled top and bottom using lathe geometry
-        const points = [];
+        // Split pen into bottom 2/3 (plastic) and top 1/3 (wood)
+        const woodStartHeight = penHeight * 0.67; // Where wood section begins
         
-        // Start at center bottom
-        points.push(new THREE.Vector2(0, 0));
+        // BOTTOM SECTION (plastic) - from bottom to woodStartHeight with chamfer
+        const chamferSize = 0.06; // Size of chamfer at junction
+        const chamferSteps = 3;
         
-        // Bottom bevel (4 segments of a quarter circle, going outward)
+        const bottomPoints = [];
+        bottomPoints.push(new THREE.Vector2(0, 0));
+        
+        // Bottom bevel
         for (let j = 0; j <= bottomBevelSegments; j++) {
             const angle = (Math.PI / 2) - (j / bottomBevelSegments) * (Math.PI / 2);
             const x = penRadius - bottomBevelRadius + Math.cos(angle) * bottomBevelRadius;
             const y = bottomBevelRadius - Math.sin(angle) * bottomBevelRadius;
-            points.push(new THREE.Vector2(x, y));
+            bottomPoints.push(new THREE.Vector2(x, y));
         }
         
+        // Straight body up to chamfer start
+        bottomPoints.push(new THREE.Vector2(penRadius, woodStartHeight - chamferSize));
+        
+        // 3-step chamfer at top of plastic section
+        for (let j = 1; j <= chamferSteps; j++) {
+            const t = j / chamferSteps;
+            const x = penRadius - (chamferSize * t * 0.5); // Slight inward angle
+            const y = woodStartHeight - chamferSize + (chamferSize * t);
+            bottomPoints.push(new THREE.Vector2(x, y));
+        }
+        
+        // Close the bottom section at the inside
+        bottomPoints.push(new THREE.Vector2(0, woodStartHeight));
+        
+        const bottomGeo = new THREE.LatheGeometry(bottomPoints, 32);
+        
+        // Plastic material
+        const bodyMat = new THREE.MeshPhysicalMaterial({
+            color: config.color,
+            roughness: 0.7,
+            metalness: 0.0,
+            clearcoat: 0.1,
+            clearcoatRoughness: 0.8,
+            reflectivity: 0.2,
+            envMapIntensity: 0.3
+        });
+        
+        const bottomBody = new THREE.Mesh(bottomGeo, bodyMat);
+        bottomBody.castShadow = true;
+        bottomBody.receiveShadow = true;
+        penGroup.add(bottomBody);
+        
+        // TOP SECTION (wood) - from woodStartHeight to top with bevel
+        const topPoints = [];
+        topPoints.push(new THREE.Vector2(0, woodStartHeight));
+        
+        // Start at the chamfer edge (slightly inward)
+        topPoints.push(new THREE.Vector2(penRadius - chamferSize * 0.5, woodStartHeight));
+        
+        // Small step out to full radius
+        topPoints.push(new THREE.Vector2(penRadius, woodStartHeight + chamferSize * 0.3));
+        
         // Straight body up to where top bevel starts
-        points.push(new THREE.Vector2(penRadius, penHeight - topBevelRadius));
+        topPoints.push(new THREE.Vector2(penRadius, penHeight - topBevelRadius));
         
         // Top bevel (8 segments of a quarter circle)
         for (let j = 0; j <= topBevelSegments; j++) {
             const angle = (j / topBevelSegments) * (Math.PI / 2);
             const x = penRadius - topBevelRadius + Math.cos(angle) * topBevelRadius;
             const y = penHeight - topBevelRadius + Math.sin(angle) * topBevelRadius;
-            points.push(new THREE.Vector2(x, y));
+            topPoints.push(new THREE.Vector2(x, y));
         }
         
-        const bodyGeo = new THREE.LatheGeometry(points, 32);
+        const topGeo = new THREE.LatheGeometry(topPoints, 32);
         
-        // Plastic material
-        const bodyMat = new THREE.MeshPhysicalMaterial({
-            color: config.color,
-            roughness: 0.25,
+        // Project UVs straight through (like real wood grain)
+        // Fixed: 90° rotation, 0.2 scale, X offset 0.65
+        const uvAttr = topGeo.attributes.uv;
+        const posAttr = topGeo.attributes.position;
+        const woodAngle = Math.PI / 2;
+        const woodScale = 0.2;
+        const woodOffsetX = 0.65;
+        for (let j = 0; j < uvAttr.count; j++) {
+            const x = posAttr.getX(j);
+            const y = posAttr.getY(j);
+            const u = x * 0.5 + 0.5;
+            const v = y * 0.3;
+            const cu = u - 0.5;
+            const cv = v - 0.5;
+            const ru = cu * Math.cos(woodAngle) - cv * Math.sin(woodAngle);
+            const rv = cu * Math.sin(woodAngle) + cv * Math.cos(woodAngle);
+            uvAttr.setXY(j, (ru + 0.5) * woodScale + woodOffsetX, (rv + 0.5) * woodScale);
+        }
+        uvAttr.needsUpdate = true;
+        
+        // Wood material
+        const penWoodTexture = woodTexture.clone();
+        penWoodTexture.needsUpdate = true;
+        penWoodTexture.wrapS = THREE.RepeatWrapping;
+        penWoodTexture.wrapT = THREE.RepeatWrapping;
+        
+        const woodMat = new THREE.MeshStandardMaterial({
+            map: penWoodTexture,
+            roughness: 0.5,
             metalness: 0.0,
-            clearcoat: 0.6,
-            clearcoatRoughness: 0.25,
-            reflectivity: 0.5,
-            envMapIntensity: 0.8
+            envMapIntensity: 0.2
         });
         
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        body.castShadow = true;
-        body.receiveShadow = true;
-        penGroup.add(body);
+        const topBody = new THREE.Mesh(topGeo, woodMat);
+        topBody.castShadow = true;
+        topBody.receiveShadow = true;
+        topBody.userData.isWoodSection = true;
+        topBody.userData.woodStartHeight = woodStartHeight;
+        topBody.userData.penHeight = penHeight;
+        penGroup.add(topBody);
         
-        // Black screen cap on top of pen with number
+        // Glowing screen with glass bubble dome
         const topCapRadius = penRadius - topBevelRadius; // Inner radius at top of bevel
-        const topCapGeo = new THREE.CircleGeometry(topCapRadius, 32);
+        const glassHeight = 0.06; // Height of the dome
+        const glassFloat = 0.01; // Tiny gap above screen
         
-        // Create canvas texture with emoji
+        // SCREEN - flush with pen top, emissive
+        const screenGeo = new THREE.CircleGeometry(topCapRadius, 32);
+        
+        // Create canvas texture with emoji on darker background (for emissive)
         const canvas = document.createElement('canvas');
         canvas.width = 128;
         canvas.height = 128;
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#111111';
+        ctx.fillStyle = '#8a9496'; // Darker grey-blue for emissive screen
         ctx.fillRect(0, 0, 128, 128);
         ctx.font = '72px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#222222'; // Dark emoji
         ctx.fillText(config.emoji, 64, 68);
         
-        const capTexture = new THREE.CanvasTexture(canvas);
+        const screenTexture = new THREE.CanvasTexture(canvas);
         
-        const topCapMat = new THREE.MeshStandardMaterial({
-            map: capTexture,
-            roughness: 0.3,
-            metalness: 0.0
+        const screenMat = new THREE.MeshStandardMaterial({
+            map: screenTexture,
+            roughness: 0.4,
+            metalness: 0.0,
+            emissive: 0xffffff,
+            emissiveMap: screenTexture,
+            emissiveIntensity: screenGlowIntensity // Glow controlled by slider
         });
-        const topCap = new THREE.Mesh(topCapGeo, topCapMat);
-        topCap.rotation.x = -Math.PI / 2; // Face up
-        topCap.position.y = penHeight; // At the very top
-        penGroup.add(topCap);
+        const screen = new THREE.Mesh(screenGeo, screenMat);
+        screen.rotation.x = -Math.PI / 2; // Face up
+        screen.position.y = penHeight; // Flush with top
+        penGroup.add(screen);
+        
+        // GLASS DOME LENS - solid lens shape with thickness
+        const domeSegments = 16;
+        const lensThickness = 0.025; // Thickness at the edge
+        const glassPoints = [];
+        
+        // Start at center bottom (inside of lens)
+        glassPoints.push(new THREE.Vector2(0, 0));
+        
+        // Bottom surface - flat or very slightly curved
+        glassPoints.push(new THREE.Vector2(topCapRadius * 0.95, 0));
+        
+        // Edge/side wall
+        glassPoints.push(new THREE.Vector2(topCapRadius, 0));
+        glassPoints.push(new THREE.Vector2(topCapRadius, lensThickness));
+        
+        // Top dome surface - curve from edge up to center peak
+        for (let j = domeSegments; j >= 0; j--) {
+            const t = j / domeSegments;
+            const r = t * topCapRadius;
+            const h = lensThickness + (1 - t * t) * glassHeight; // Dome above the edge thickness
+            glassPoints.push(new THREE.Vector2(r, h));
+        }
+        
+        const glassGeo = new THREE.LatheGeometry(glassPoints, 32);
+        
+        const glassMat = new THREE.MeshPhysicalMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.3,
+            roughness: 0.0, // Super glossy
+            metalness: 0.0,
+            transmission: 0.85,
+            thickness: 0.05,
+            ior: 1.5,
+            envMapIntensity: 0.8, // Catch reflections
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.0
+        });
+        const glassDome = new THREE.Mesh(glassGeo, glassMat);
+        glassDome.position.y = penHeight + glassFloat; // Float just above screen
+        penGroup.add(glassDome);
+        
+        // Scan light - RectAreaLight at the bottom of pen (scan area)
+        const scanLightSize = penRadius * 1.2;
+        const screenLight = new THREE.RectAreaLight(0xffffff, screenLightIntensity * 5, scanLightSize, scanLightSize);
+        screenLight.position.set(0, 0.1, 0); // Near bottom of pen
+        screenLight.lookAt(0, -1, 0); // Look downward toward paper/table
+        penGroup.add(screenLight);
+        
+        // Keep references for updates
+        const topCap = screen;
+        screen.userData.isScreen = true; // Tag for glow slider
+        screen.userData.canvas = canvas;
+        screen.userData.ctx = ctx;
+        screen.userData.texture = screenTexture;
+        screen.userData.emoji = config.emoji;
+        screen.userData.defaultColor = '#8a9496';
         
         // Glass/plastic washer at the bottom
         const washerOuterRadius = penRadius * 0.85;
@@ -779,7 +938,8 @@ function createPens() {
         penGroup.add(washer);
         
         // Light at bottom of washer (shines down onto table/paper) - warm white
-        const penLight = new THREE.PointLight(0xfffaf0, penLightIntensity, 4);
+        // TEMPORARILY DISABLED - testing RectAreaLight scan light
+        const penLight = new THREE.PointLight(0xfffaf0, 0, 4); // intensity 0 for now
         penLight.position.y = -washerHeight - 0.05; // Below the washer to illuminate table
         penGroup.add(penLight);
         
@@ -801,9 +961,21 @@ function createPens() {
             penGroup.userData.targetRotationX = Math.PI / 2;
             penGroup.userData.targetRotationZ = randomRot;
             penGroup.userData.targetY = tippedHeight;
+            
+            // Initialize screen color for tipped pens (grey/idle state)
+            penGroup.userData.targetScreenHue = null;
+            penGroup.userData.currentScreenHue = 0;
+            penGroup.userData.currentScreenSat = 0;
+            penGroup.userData.currentScreenLightness = 56;
         } else {
             // Start standing on paper
             penGroup.position.set(config.defaultX, penBaseHeight + 0.25, config.defaultZ); // 0.25 = paper height
+            
+            // Initialize screen color for standing pens
+            penGroup.userData.targetScreenHue = null;
+            penGroup.userData.currentScreenHue = 0;
+            penGroup.userData.currentScreenSat = 0;
+            penGroup.userData.currentScreenLightness = 56;
             penGroup.userData.tippedOver = false;
             penGroup.userData.targetRotationX = 0;
             penGroup.userData.targetRotationZ = 0;
@@ -817,8 +989,10 @@ function createPens() {
             name: config.name,
             color: config.color,
             light: penLight,
+            screenLight: screenLight, // Light that casts from screen
             isPlaying: false,
-            currentNote: null
+            currentNote: null,
+            lastColorChangeTime: 0 // Cooldown tracking
         };
         
         pens.push(penGroup);
@@ -964,6 +1138,18 @@ function setupLightingControls() {
             paintRotValue.textContent = value + '°';
         });
     }
+    
+    // Reset camera button
+    const resetCameraBtn = document.getElementById('resetCameraBtn');
+    if (resetCameraBtn) {
+        resetCameraBtn.addEventListener('click', () => {
+            resetCameraToDefault();
+        });
+    }
+}
+
+function resetCameraToDefault() {
+    isResettingCamera = true;
 }
 
 function rebakeCubeCamera() {
@@ -1125,8 +1311,7 @@ function onTouchEnd(event) {
 
 // Get the base pen height from slider (or default)
 function getBasePenHeight() {
-    const slider = document.getElementById('penHeightSlider');
-    return slider ? parseFloat(slider.value) : 0.6;
+    return 0.2; // Locked at 0.2
 }
 
 // Adjust pen height based on surface underneath (sets target, lerped in animate)
@@ -1270,6 +1455,143 @@ function updatePenHeights() {
     });
 }
 
+function setScreenTargetHue(pen, hue, specialColor = null) {
+    // Set the target hue for lerping - null means return to grey
+    // specialColor can be 'white', 'black', or null
+    pen.userData.targetScreenHue = hue;
+    pen.userData.targetSpecialColor = specialColor;
+    if (pen.userData.currentScreenHue === undefined) {
+        pen.userData.currentScreenHue = hue !== null ? hue : 0;
+        pen.userData.currentScreenSat = hue !== null ? 50 : 0;
+    }
+    if (pen.userData.currentScreenLightness === undefined) {
+        pen.userData.currentScreenLightness = 40; // Default lightness
+    }
+}
+
+function updateScreenColors() {
+    // Lerp all pen screen colors toward their targets
+    const lerpSpeed = 0.08;
+    
+    pens.forEach(pen => {
+        // Always update tipped pens even if no target set
+        const isTipped = pen.userData.tippedOver;
+        
+        // For tipped pens, ensure light is on even without color data
+        if (isTipped && pen.userData.screenLight) {
+            pen.userData.screenLight.color.set(0xffffff);
+            pen.userData.screenLight.intensity = 2.0; // Lying down = 2.0
+        }
+        
+        if (pen.userData.targetScreenHue === undefined && pen.userData.targetSpecialColor === undefined) return;
+        
+        const targetHue = pen.userData.targetScreenHue;
+        const specialColor = pen.userData.targetSpecialColor;
+        let currentHue = pen.userData.currentScreenHue || 0;
+        let currentSat = pen.userData.currentScreenSat || 0;
+        let currentLightness = pen.userData.currentScreenLightness || 40;
+        
+        // Determine target values based on special color or hue
+        let targetSat, targetLightness;
+        if (specialColor === 'white') {
+            targetSat = 0;
+            targetLightness = 95;
+        } else if (specialColor === 'black') {
+            targetSat = 0;
+            targetLightness = 10;
+        } else if (targetHue !== null) {
+            targetSat = 50;
+            targetLightness = 40;
+        } else {
+            targetSat = 0;
+            targetLightness = 56; // Default grey (matches initial #8a9496)
+        }
+        
+        // Lerp hue (handle wrap-around for smooth color wheel transitions)
+        if (targetHue !== null && !specialColor) {
+            let hueDiff = targetHue - currentHue;
+            // Take shortest path around color wheel
+            if (hueDiff > 180) hueDiff -= 360;
+            if (hueDiff < -180) hueDiff += 360;
+            currentHue += hueDiff * lerpSpeed;
+            // Keep in 0-360 range
+            if (currentHue < 0) currentHue += 360;
+            if (currentHue >= 360) currentHue -= 360;
+        }
+        
+        // Lerp saturation and lightness
+        currentSat += (targetSat - currentSat) * lerpSpeed;
+        currentLightness += (targetLightness - currentLightness) * lerpSpeed;
+        
+        pen.userData.currentScreenHue = currentHue;
+        pen.userData.currentScreenSat = currentSat;
+        pen.userData.currentScreenLightness = currentLightness;
+        
+        // Update the screen visuals
+        pen.traverse(child => {
+            if (child.userData && child.userData.isScreen) {
+                const ctx = child.userData.ctx;
+                const canvas = child.userData.canvas;
+                const texture = child.userData.texture;
+                const emoji = child.userData.emoji;
+                
+                if (ctx && canvas && texture) {
+                    if (currentSat > 1) {
+                        // Colored state
+                        ctx.fillStyle = `hsl(${currentHue}, ${currentSat}%, ${currentLightness}%)`;
+                        if (child.material && child.material.emissive) {
+                            child.material.emissive.setHSL(currentHue / 360, currentSat / 100, currentLightness / 200);
+                        }
+                    } else {
+                        // White, black, or grey state
+                        ctx.fillStyle = `hsl(0, 0%, ${currentLightness}%)`;
+                        if (child.material && child.material.emissive) {
+                            child.material.emissive.setHSL(0, 0, currentLightness / 200);
+                        }
+                    }
+                    ctx.fillRect(0, 0, 128, 128);
+                    ctx.font = '72px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    // Dark text on light backgrounds, light text on dark backgrounds
+                    ctx.fillStyle = currentLightness > 50 ? '#222222' : '#dddddd';
+                    ctx.fillText(emoji, 64, 68);
+                    
+                    texture.needsUpdate = true;
+                }
+            }
+        });
+        
+        // Update the scan RectAreaLight color and intensity
+        // Always on - white when tipped/idle, colored when over colors
+        if (pen.userData.screenLight) {
+            const isTipped = pen.userData.tippedOver;
+            
+            if (isTipped) {
+                // Tipped pens - white light, 2.0 intensity
+                pen.userData.screenLight.color.set(0xffffff);
+                pen.userData.screenLight.intensity = 2.0;
+            } else if (currentSat > 1) {
+                // Standing pen over color - colored light, 1.0 base
+                pen.userData.screenLight.color.setHSL(currentHue / 360, 0.7, 0.5);
+                pen.userData.screenLight.intensity = 1.0;
+            } else if (currentLightness > 60) {
+                // Over white area - 1.0 base
+                pen.userData.screenLight.color.set(0xffffff);
+                pen.userData.screenLight.intensity = 1.0;
+            } else if (currentLightness < 25) {
+                // Over black area - dim, 1.0 base
+                pen.userData.screenLight.color.set(0x333333);
+                pen.userData.screenLight.intensity = 1.0;
+            } else {
+                // Idle standing pen - white scanning light, 1.0 base
+                pen.userData.screenLight.color.set(0xffffff);
+                pen.userData.screenLight.intensity = 1.0;
+            }
+        }
+    });
+}
+
 function checkPenOverColor(pen) {
     // Adjust pen height based on surface
     adjustPenHeight(pen);
@@ -1289,14 +1611,27 @@ function checkPenOverColor(pen) {
     
     // Find color strips (now inside paperGroup)
     const colorStrips = [];
+    let paperBase = null;
     if (paperGroup) {
         paperGroup.traverse(obj => {
             if (obj.userData?.type === 'colorStrip') {
                 colorStrips.push(obj);
             }
+            if (obj.userData?.type === 'paperBase') {
+                paperBase = obj;
+            }
         });
     }
     const intersects = downRay.intersectObjects(colorStrips);
+    
+    // Check if over paper base (white area)
+    let paperHit = null;
+    if (paperBase) {
+        const paperIntersects = downRay.intersectObject(paperBase);
+        if (paperIntersects.length > 0) {
+            paperHit = paperIntersects[0];
+        }
+    }
     
     // Check painting separately
     let paintingHit = null;
@@ -1309,11 +1644,15 @@ function checkPenOverColor(pen) {
     
     // Determine what the pen is over (color strip or painting)
     let noteData = null;
+    let specialColorData = null; // 'white' or 'black' - changes screen but no audio
     
     if (intersects.length > 0) {
         // Over a color strip
         const strip = intersects[0].object;
         noteData = strip.userData;
+    } else if (paperHit && !paintingHit) {
+        // Over white paper (not a tile, not the painting)
+        specialColorData = 'white';
     } else if (paintingHit) {
         // Over the painting - sample color and find closest note
         const uv = paintingHit.uv;
@@ -1322,8 +1661,16 @@ function checkPenOverColor(pen) {
             if (rgb) {
                 const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
                 
+                // Check for white (high lightness, low saturation)
+                if (hsl.l > 0.85 && hsl.s < 0.15) {
+                    specialColorData = 'white';
+                }
+                // Check for black (low lightness)
+                else if (hsl.l < 0.15) {
+                    specialColorData = 'black';
+                }
                 // Only play if saturation is high enough (skip very gray areas)
-                if (hsl.s > 0.15) {
+                else if (hsl.s > 0.15) {
                     const closestNote = findClosestNoteByHue(hsl.h);
                     noteData = {
                         note: closestNote.note,
@@ -1338,17 +1685,26 @@ function checkPenOverColor(pen) {
         }
     }
     
+    const now = Date.now();
+    const canChangeColor = (now - pen.userData.lastColorChangeTime) >= COLOR_CHANGE_COOLDOWN;
+    
     if (noteData) {
-        if (pen.userData.currentNote !== noteData.note) {
+        if (pen.userData.currentNote !== noteData.note && canChangeColor) {
             const wasPlaying = pen.userData.isPlaying;
             const penId = pen.userData.originalId;  // Use physical pen ID, not mode ID!
             
             // Pen entered new color
             pen.userData.currentNote = noteData.note;
             pen.userData.isPlaying = true;
+            pen.userData.specialColor = null;
+            pen.userData.lastColorChangeTime = now; // Start cooldown
             
-            // Turn on pen light
-            pen.userData.light.intensity = penLightIntensity;
+            // Update screen to show sensed color (will lerp)
+            const screenHue = noteData.sampledHue !== undefined ? noteData.sampledHue * 360 : noteData.hue;
+            setScreenTargetHue(pen, screenHue);
+            
+            // Turn on pen light - TEMPORARILY DISABLED
+            // pen.userData.light.intensity = penLightIntensity;
             
             // Trigger audio
             if (audioEngine) {
@@ -1361,12 +1717,36 @@ function checkPenOverColor(pen) {
                 }
             }
         }
+    } else if (specialColorData) {
+        // Over white or black - update screen but stop any audio (with cooldown)
+        if (pen.userData.specialColor !== specialColorData && canChangeColor) {
+            pen.userData.specialColor = specialColorData;
+            pen.userData.lastColorChangeTime = now; // Start cooldown
+            
+            // Stop audio if was playing
+            if (pen.userData.isPlaying) {
+                const penId = pen.userData.originalId;
+                pen.userData.currentNote = null;
+                pen.userData.isPlaying = false;
+                pen.userData.light.intensity = 0;
+                if (audioEngine) {
+                    audioEngine.penLeave(penId);
+                }
+            }
+            
+            // Update screen to white/black
+            setScreenTargetHue(pen, null, specialColorData);
+        }
     } else {
-        if (pen.userData.isPlaying) {
+        if (pen.userData.isPlaying || pen.userData.specialColor) {
             // Pen left all colors/painting
             const penId = pen.userData.originalId;  // Use physical pen ID, not mode ID!
             pen.userData.currentNote = null;
             pen.userData.isPlaying = false;
+            pen.userData.specialColor = null;
+            
+            // Reset screen to default color (will lerp)
+            setScreenTargetHue(pen, null);
             
             // Turn off pen light
             pen.userData.light.intensity = 0;
@@ -1381,26 +1761,59 @@ function checkPenOverColor(pen) {
 
 let lastPenCheck = 0;
 const PEN_CHECK_INTERVAL = 100; // Check every 100ms
-let lastCameraUpdate = 0;
+const COLOR_CHANGE_COOLDOWN = 150; // Min time (ms) between color changes
+let lastCameraCheck = 0;
 
 function animate() {
     requestAnimationFrame(animate);
     
     controls.update();
     
+    // Camera reset lerping
+    if (isResettingCamera) {
+        const lerpSpeed = 0.08;
+        camera.position.lerp(DEFAULT_CAMERA_POS, lerpSpeed);
+        controls.target.lerp(DEFAULT_CAMERA_TARGET, lerpSpeed);
+        
+        // Check if close enough to stop
+        if (camera.position.distanceTo(DEFAULT_CAMERA_POS) < 0.01 &&
+            controls.target.distanceTo(DEFAULT_CAMERA_TARGET) < 0.01) {
+            camera.position.copy(DEFAULT_CAMERA_POS);
+            controls.target.copy(DEFAULT_CAMERA_TARGET);
+            isResettingCamera = false;
+        }
+    }
+    
     // Smoothly lerp pen heights
     updatePenHeights();
     
-    // Update camera info display (throttled)
+    // Smoothly lerp screen colors
+    updateScreenColors();
+    
+    // Update camera info and reset button visibility (throttled)
     const currentTime = Date.now();
-    if (currentTime - lastCameraUpdate > 200) {
-        lastCameraUpdate = currentTime;
+    if (currentTime - lastCameraCheck > 200) {
+        lastCameraCheck = currentTime;
+        
+        // Update camera info display
         const camInfo = document.getElementById('cameraInfo');
         if (camInfo) {
             const rotX = (camera.rotation.x * 180 / Math.PI).toFixed(1);
             const rotY = (camera.rotation.y * 180 / Math.PI).toFixed(1);
             const rotZ = (camera.rotation.z * 180 / Math.PI).toFixed(1);
-            camInfo.innerHTML = `Cam pos: ${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)}<br>Cam target: ${controls.target.x.toFixed(1)}, ${controls.target.y.toFixed(1)}, ${controls.target.z.toFixed(1)}<br>Cam rot: ${rotX}°, ${rotY}°, ${rotZ}°`;
+            camInfo.innerHTML = `Cam: ${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)}<br>Rot: ${rotX}°, ${rotY}°, ${rotZ}°`;
+        }
+        
+        // Show/hide reset button based on camera distance from default
+        const resetBtn = document.getElementById('resetCameraBtn');
+        if (resetBtn) {
+            const posDist = camera.position.distanceTo(DEFAULT_CAMERA_POS);
+            const targetDist = controls.target.distanceTo(DEFAULT_CAMERA_TARGET);
+            if (posDist > 0.5 || targetDist > 0.5) {
+                resetBtn.style.display = 'block';
+            } else {
+                resetBtn.style.display = 'none';
+            }
         }
     }
     
@@ -1415,17 +1828,33 @@ function animate() {
         });
     }
     
-    // Pen lights always on, pulse more intensely when playing
-    pens.forEach(pen => {
-        const time = Date.now() * 0.003;
-        if (pen.userData.isPlaying) {
-            // Brighter and faster pulse when playing
-            pen.userData.light.intensity = penLightIntensity * 1.5 + Math.sin(time * 2) * (penLightIntensity * 0.5);
-        } else {
-            // Gentle glow when scanning
-            pen.userData.light.intensity = penLightIntensity + Math.sin(time) * (penLightIntensity * 0.2);
-        }
-    });
+    // RectAreaLight pulsing - synced to audioContext time (100 BPM)
+    // Use the audio engine's time source to stay in perfect sync
+    if (audioEngine && audioEngine.audioContext) {
+        const bpm = audioEngine.bpm;
+        const beatDuration = 60 / bpm; // seconds per beat
+        const audioTime = audioEngine.audioContext.currentTime;
+        const beatsElapsed = audioTime / beatDuration;
+        const beatPhase = beatsElapsed * Math.PI * 2; // One full sin wave per beat
+        
+        pens.forEach(pen => {
+            if (pen.userData.screenLight) {
+                const isTipped = pen.userData.tippedOver;
+                const baseIntensity = isTipped ? 2.0 : 1.0; // 2.0 lying down, 1.0 upright
+                
+                if (pen.userData.isPlaying) {
+                    // Pulse every 4 beats when playing (upright only)
+                    pen.userData.screenLight.intensity = baseIntensity * 1.5 + Math.sin(beatPhase / 4) * (baseIntensity * 0.5);
+                } else if (isTipped) {
+                    // Gentle pulse every 8 beats when lying down
+                    pen.userData.screenLight.intensity = baseIntensity + Math.sin(beatPhase / 8) * (baseIntensity * 0.15);
+                } else {
+                    // Gentle pulse every 8 beats when idle upright
+                    pen.userData.screenLight.intensity = baseIntensity + Math.sin(beatPhase / 8) * (baseIntensity * 0.15);
+                }
+            }
+        });
+    }
     
     composer.render();
 }

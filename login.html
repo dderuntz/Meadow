@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Meadow</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500&display=swap');
-        
         * {
             margin: 0;
             padding: 0;
@@ -18,39 +16,31 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: 'Playfair Display', Georgia, serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-            color: #e8e8e8;
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f5f5f5;
+            color: rgba(0, 0, 0, 0.7);
         }
         
         .container {
             text-align: center;
             padding: 60px 40px;
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            backdrop-filter: blur(10px);
             max-width: 400px;
             width: 90%;
         }
         
         h1 {
-            font-size: 3em;
+            font-size: 2.5em;
             font-weight: 400;
-            margin-bottom: 10px;
-            letter-spacing: 0.15em;
-            background: linear-gradient(135deg, #e8e8e8 0%, #a8a8a8 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            margin-bottom: 8px;
+            letter-spacing: 0.1em;
+            color: rgba(0, 0, 0, 0.7);
         }
         
         .subtitle {
-            font-size: 0.95em;
-            color: rgba(255, 255, 255, 0.5);
-            margin-bottom: 40px;
-            letter-spacing: 0.2em;
-            text-transform: uppercase;
+            font-size: 0.9em;
+            color: rgba(0, 0, 0, 0.4);
+            margin-bottom: 50px;
+            letter-spacing: 0.05em;
         }
         
         .input-group {
@@ -59,32 +49,32 @@
         
         input[type="password"] {
             width: 100%;
-            padding: 16px 20px;
-            font-size: 1.1em;
+            padding: 14px 20px;
+            font-size: 1em;
             font-family: inherit;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 10px;
-            color: #e8e8e8;
+            background: rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50px;
+            color: rgba(0, 0, 0, 0.7);
             text-align: center;
-            letter-spacing: 0.3em;
-            transition: all 0.3s ease;
+            letter-spacing: 0.2em;
+            transition: all 0.2s ease;
         }
         
         input[type="password"]:focus {
             outline: none;
-            border-color: rgba(255, 255, 255, 0.4);
-            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(0, 0, 0, 0.25);
+            background: rgba(0, 0, 0, 0.08);
         }
         
         input[type="password"]::placeholder {
-            color: rgba(255, 255, 255, 0.3);
-            letter-spacing: 0.1em;
+            color: rgba(0, 0, 0, 0.3);
+            letter-spacing: 0.05em;
         }
         
         .error {
-            color: #ff6b6b;
-            font-size: 0.9em;
+            color: #c44;
+            font-size: 0.85em;
             margin-top: 15px;
             opacity: 0;
             transition: opacity 0.3s ease;
@@ -95,70 +85,46 @@
         }
         
         button {
-            padding: 14px 40px;
-            font-size: 1em;
+            padding: 12px 32px;
+            font-size: 0.9em;
             font-family: inherit;
-            background: transparent;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 8px;
-            color: #e8e8e8;
+            background: rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(0, 0, 0, 0.15);
+            border-radius: 50px;
+            color: rgba(0, 0, 0, 0.6);
             cursor: pointer;
-            letter-spacing: 0.15em;
-            text-transform: uppercase;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
         }
         
         button:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: rgba(255, 255, 255, 0.5);
+            background: rgba(0, 0, 0, 0.15);
+            border-color: rgba(0, 0, 0, 0.3);
         }
         
         .links {
-            margin-top: 40px;
-            padding-top: 30px;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            margin-top: 50px;
         }
         
         .links a {
             display: inline-block;
-            margin: 0 15px;
-            color: rgba(255, 255, 255, 0.5);
+            margin: 0 10px;
+            padding: 10px 16px;
+            background: rgba(0, 0, 0, 0.1);
+            color: rgba(0, 0, 0, 0.6);
             text-decoration: none;
-            font-size: 0.85em;
-            letter-spacing: 0.1em;
-            transition: color 0.3s ease;
+            border-radius: 50px;
+            font-size: 0.8em;
+            border: 1px solid rgba(0, 0, 0, 0.15);
+            transition: all 0.2s ease;
         }
         
         .links a:hover {
-            color: rgba(255, 255, 255, 0.8);
-        }
-        
-        /* Decorative elements */
-        .decoration {
-            position: fixed;
-            width: 300px;
-            height: 300px;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(102, 126, 234, 0.1) 0%, transparent 70%);
-            pointer-events: none;
-        }
-        
-        .decoration.top-right {
-            top: -100px;
-            right: -100px;
-        }
-        
-        .decoration.bottom-left {
-            bottom: -100px;
-            left: -100px;
-            background: radial-gradient(circle, rgba(234, 102, 180, 0.1) 0%, transparent 70%);
+            background: rgba(0, 0, 0, 0.15);
+            border-color: rgba(0, 0, 0, 0.3);
         }
     </style>
 </head>
 <body>
-    <div class="decoration top-right"></div>
-    <div class="decoration bottom-left"></div>
-    
     <div class="container">
         <h1>Meadow</h1>
         <p class="subtitle">A musical experiment</p>
@@ -172,7 +138,7 @@
         </form>
         
         <div class="links" id="links" style="display: none;">
-            <a href="index.html">Classic View</a>
+            <a href="index.html">2D test</a>
             <a href="studio.html">Studio</a>
         </div>
     </div>
