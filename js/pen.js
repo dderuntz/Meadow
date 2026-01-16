@@ -1,20 +1,19 @@
-// Base Pen class - draggable objects that generate sound
+// Pen class - DOM-based draggable pen that extends PenCore
+// Handles DOM rendering, drag interactions, and tile detection
 
-export class Pen {
+import { PenCore } from './pen-core.js';
+
+export class Pen extends PenCore {
     constructor(id, audioContext, bpm = 100) {
-        this.id = id;
-        this.audioContext = audioContext;
-        this.bpm = bpm;
+        super(id, audioContext, bpm);
+        
         this.element = null;
         this.isDragging = false;
         this.currentTile = null;
         this.lastTileTime = 0;
-        this.resetTimeout = null;
-        this.internalMetronome = null;
-        this.metronomeStartTime = null;
         this.lastPosition = null; // Track position to avoid false "left tile" events
-        
         this.tileCheckInterval = null;
+        
         this.createElement();
         this.setupDragHandlers();
         // Start continuous tile checking immediately
@@ -176,23 +175,21 @@ export class Pen {
         if (validTile && tile !== this.currentTile) {
             // On a new tile
             const note = tile.dataset.note;
+            const frequency = parseFloat(tile.dataset.frequency);
             this.currentTile = tile;
             this.lastTileTime = now;
-            
-            // Clear reset timeout
-            if (this.resetTimeout) {
-                clearTimeout(this.resetTimeout);
-                this.resetTimeout = null;
-            }
-            
-            // Start or continue metronome
-            if (!this.internalMetronome || !this.internalMetronome.running) {
-                this.startInternalMetronome();
-            }
             
             // Visual feedback - pen is playing
             this.element.classList.add('playing');
             
+            // Use PenCore methods
+            if (!this.isActive) {
+                this.activate(note, frequency);
+            } else {
+                this.changeNote(note, frequency);
+            }
+            
+            // Legacy callback for subclasses
             this.onTileEnter(tile);
         } else if (!validTile && this.currentTile) {
             // Left tiles
@@ -201,80 +198,36 @@ export class Pen {
             // Visual feedback - pen stopped playing
             this.element.classList.remove('playing');
             
-            // Set reset timeout (1 second)
-            if (this.resetTimeout) {
-                clearTimeout(this.resetTimeout);
-            }
-            this.resetTimeout = setTimeout(() => {
-                this.resetMetronome();
-            }, 1000);
+            // Use PenCore method
+            this.deactivate();
             
+            // Legacy callback
             this.onTileLeave();
         } else if (validTile && tile === this.currentTile) {
             // Still on same tile
             this.lastTileTime = now;
+            this.sustain();
+            
             if (tile && tile.dataset) {
                 this.onTileStay(tile);
             }
-        } else if (!validTile && !this.currentTile) {
-            // Not over any tile and wasn't over one before - do nothing
         }
     }
 
-    startInternalMetronome() {
-        if (!this.audioContext || this.audioContext.state !== 'running') {
-            // Try to get audio context from global player if not available
-            if (window.musicPlayer && window.musicPlayer.audioContext) {
-                this.audioContext = window.musicPlayer.audioContext;
-            } else {
-                return;
-            }
-        }
-        
-        if (this.audioContext.state !== 'running') {
-            return;
-        }
-        
-        // Create simple internal metronome
-        this.metronomeStartTime = this.audioContext.currentTime;
-        this.internalMetronome = {
-            running: true,
-            startTime: this.metronomeStartTime,
-            beatDuration: 60 / this.bpm
-        };
-    }
-
-    resetMetronome() {
-        if (this.internalMetronome) {
-            this.internalMetronome.running = false;
-            this.internalMetronome = null;
-            this.metronomeStartTime = null;
-        }
-    }
-
-    getBeatTime() {
-        if (!this.internalMetronome || !this.internalMetronome.running) {
-            return this.audioContext.currentTime;
-        }
-        
-        const elapsed = this.audioContext.currentTime - this.internalMetronome.startTime;
-        const beatDuration = this.internalMetronome.beatDuration;
-        const currentBeat = Math.floor(elapsed / beatDuration);
-        return this.internalMetronome.startTime + (currentBeat * beatDuration);
-    }
-
-    getNextBeatTime() {
-        if (!this.internalMetronome || !this.internalMetronome.running) {
-            return this.audioContext.currentTime + 0.01;
-        }
-        
-        const beatDuration = this.internalMetronome.beatDuration;
-        const currentBeatTime = this.getBeatTime();
-        return currentBeatTime + beatDuration;
-    }
-
-    // Override these in subclasses
+    // Legacy callbacks for subclasses (DOM-specific pens)
     onTileEnter(tile) {}
     onTileLeave() {}
     onTileStay(tile) {}
+    
+    // Override destroy to clean up DOM
+    destroy() {
+        super.destroy();
+        if (this.tileCheckInterval) {
+            clearInterval(this.tileCheckInterval);
+            this.tileCheckInterval = null;
+        }
+        if (this.element && this.element.parentNode) {
+            this.element.parentNode.removeChild(this.element);
+        }
+    }
 }

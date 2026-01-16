@@ -91,16 +91,22 @@ export function getKitPattern(kitNumber, isVariation) {
     switch (kitNumber) {
         case 1: // Clock tick/tock - basic drums
             if (isVariation) {
-                // C# variation - basic with offbeat
+                // C# variation - building intensity, more hits
                 return [
                     { pos: 0, sound: 'tick' },
-                    { pos: 4, sound: 'tock' },
+                    { pos: 2, sound: 'tock' },
+                    { pos: 4, sound: 'tick' },
+                    { pos: 6, sound: 'tock' },
                     { pos: 8, sound: 'tick' },
-                    { pos: 12, sound: 'tock' },
-                    { pos: 14, sound: 'tick' }
+                    { pos: 10, sound: 'tick' },
+                    { pos: 11, sound: 'tock' },
+                    { pos: 12, sound: 'tick' },
+                    { pos: 13, sound: 'tock' },
+                    { pos: 14, sound: 'tick' },
+                    { pos: 15, sound: 'tock' }
                 ];
             } else {
-                // C base pattern: •-•-|•-•-|•-•-|•-••|
+                // C base pattern: steady tick-tock
                 return [
                     { pos: 0, sound: 'tick' },
                     { pos: 4, sound: 'tock' },
