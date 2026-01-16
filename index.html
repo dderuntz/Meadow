@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDI Music Player</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 MIDI Music Player</h1>
+        <p class="subtitle">Drag your cursor over the tiles to play music!</p>
+
+        <div class="row">
+            <div class="row-label">Chromatic Scale (C to B)</div>
+            <div class="row-content">
+            <div class="tile chromatic-tile" data-note="C" data-frequency="261.63">
+                <span class="note-label">C</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="C#" data-frequency="277.18">
+                <span class="note-label">C#</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="D#" data-frequency="311.13">
+                <span class="note-label">D#</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="F" data-frequency="349.23">
+                <span class="note-label">F</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="F#" data-frequency="369.99">
+                <span class="note-label">F#</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="G" data-frequency="392.00">
+                <span class="note-label">G</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="G#" data-frequency="415.30">
+                <span class="note-label">G#</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="A" data-frequency="440.00">
+                <span class="note-label">A</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="A#" data-frequency="466.16">
+                <span class="note-label">A#</span>
+            </div>
+            <div class="tile chromatic-tile" data-note="B" data-frequency="493.88">
+                <span class="note-label">B</span>
+            </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="row-label">🎶 Mary Had a Little Lamb</div>
+            <div class="row-content">
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="C" data-frequency="261.63">
+                <span class="note-label">C</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="G" data-frequency="392.00">
+                <span class="note-label">G</span>
+            </div>
+            <div class="tile song-tile" data-note="G" data-frequency="392.00">
+                <span class="note-label">G</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="C" data-frequency="261.63">
+                <span class="note-label">C</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="E" data-frequency="329.63">
+                <span class="note-label">E</span>
+            </div>
+            <div class="tile song-tile" data-note="D" data-frequency="293.66">
+                <span class="note-label">D</span>
+            </div>
+            <div class="tile song-tile" data-note="C" data-frequency="261.63">
+                <span class="note-label">C</span>
+            </div>
+            </div>
+        </div>
+
+        <div id="pens-container"></div>
+
+        <div class="pen-controls-grid">
+            <div class="pen-control-panel" id="pen1-controls">
+                <h3 class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">🪶 Woodpecker <span class="collapse-icon">▼</span></h3>
+                <div class="panel-content">
+                <div class="control-group">
+                    <label class="control-label">Volume:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen1VolumeSlider" class="slider" min="0" max="100" value="70" step="1">
+                        <span class="slider-value" id="pen1VolumeValue">70%</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Pattern:</label>
+                    <div id="pen1PatternDisplay" class="pattern-display">-</div>
+                </div>
+                </div>
+            </div>
+            
+            <div class="pen-control-panel collapsed" id="pen2-controls">
+                <h3 class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">🐸 Toad <span class="collapse-icon">▼</span></h3>
+                <div class="panel-content">
+                <div class="control-group">
+                    <label class="control-label">Volume:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen2VolumeSlider" class="slider" min="0" max="100" value="70" step="1">
+                        <span class="slider-value" id="pen2VolumeValue">70%</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Octave:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen2OctaveSlider" class="slider" min="0" max="3" value="3" step="1">
+                        <span class="slider-value" id="pen2OctaveValue">-3</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Decay:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen2DecaySlider" class="slider" min="30" max="100" value="100" step="5">
+                        <span class="slider-value" id="pen2DecayValue">100%</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Cutoff:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen2CutoffSlider" class="slider" min="200" max="4000" value="800" step="100">
+                        <span class="slider-value" id="pen2CutoffValue">800Hz</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Resonance:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen2ResonanceSlider" class="slider" min="1" max="30" value="16" step="1">
+                        <span class="slider-value" id="pen2ResonanceValue">16</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Sweep:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen2SweepSlider" class="slider" min="0" max="4000" value="2600" step="100">
+                        <span class="slider-value" id="pen2SweepValue">2600Hz</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Squelch:</label>
+                    <div class="slider-container">
+                        <input type="checkbox" id="pen2SquelchToggle" class="toggle" checked>
+                        <span class="slider-value">On</span>
+                    </div>
+                </div>
+                </div>
+            </div>
+            
+            <div class="pen-control-panel collapsed" id="pen3-controls">
+                <h3 class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">🧚 Fairy <span class="collapse-icon">▼</span></h3>
+                <div class="panel-content">
+                <div class="control-group">
+                    <label class="control-label">Volume:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen3VolumeSlider" class="slider" min="0" max="100" value="70" step="1">
+                        <span class="slider-value" id="pen3VolumeValue">70%</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Octave:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen3OctaveSlider" class="slider" min="-2" max="2" value="-1" step="1">
+                        <span class="slider-value" id="pen3OctaveValue">-1</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Climb:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen3ClimbSlider" class="slider" min="1" max="4" value="2" step="1">
+                        <span class="slider-value" id="pen3ClimbValue">2 oct</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Sustain:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen3SustainSlider" class="slider" min="5" max="100" value="35" step="5">
+                        <span class="slider-value" id="pen3SustainValue">35%</span>
+                    </div>
+                </div>
+                </div>
+            </div>
+            
+            <div class="pen-control-panel collapsed" id="pen4-controls">
+                <h3 class="panel-header" onclick="this.parentElement.classList.toggle('collapsed')">🐦 Robin <span class="collapse-icon">▼</span></h3>
+                <div class="panel-content">
+                <div class="control-group">
+                    <label class="control-label">Volume:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen4VolumeSlider" class="slider" min="0" max="100" value="60" step="1">
+                        <span class="slider-value" id="pen4VolumeValue">60%</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Wave:</label>
+                    <div class="slider-container">
+                        <select id="pen4WaveSelect" class="wave-select">
+                            <option value="sine">Sine</option>
+                            <option value="triangle">Triangle</option>
+                            <option value="sawtooth">Sawtooth</option>
+                            <option value="square">Square</option>
+                            <option value="voice">Voice/Choir</option>
+                            <option value="flute" selected>Flute</option>
+                            <option value="reed">Reed/Clarinet</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Octave:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen4OctaveSlider" class="slider" min="-2" max="2" value="1" step="1">
+                        <span class="slider-value" id="pen4OctaveValue">+1</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Filter:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen4FilterSlider" class="slider" min="200" max="8000" value="8000" step="100">
+                        <span class="slider-value" id="pen4FilterValue">8000Hz</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Breath:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen4BreathSlider" class="slider" min="0" max="20" value="6" step="1">
+                        <span class="slider-value" id="pen4BreathValue">6%</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Vib Rate:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen4RateSlider" class="slider" min="1" max="12" value="5" step="0.5">
+                        <span class="slider-value" id="pen4RateValue">5Hz</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Vib Depth:</label>
+                    <div class="slider-container">
+                        <input type="range" id="pen4DepthSlider" class="slider" min="0" max="10" value="2" step="0.5">
+                        <span class="slider-value" id="pen4DepthValue">2%</span>
+                    </div>
+                </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <p>💡 <strong>How to play:</strong> Drag the creatures over the color tiles to make music!</p>
+            <p>🪶 Woodpecker | 🐸 Toad | 🧚 Fairy | 🐦 Robin</p>
+        </div>
+    </div>
+
+    <script type="module" src="js/main.js?v=18"></script>
+</body>
+</html>
+
