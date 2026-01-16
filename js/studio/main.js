@@ -109,13 +109,26 @@ const NOTE_COLORS = [
     { note: 'B', frequency: 493.88, hue: 330 }
 ];
 
+// Pen modes - can be cycled on click
+const PEN_MODES = [
+    { id: 1, name: 'Drum', emoji: '🥁' },
+    { id: 2, name: 'Frog', emoji: '🐸' },
+    { id: 3, name: 'Fairy', emoji: '🧚' },
+    { id: 4, name: 'Robin', emoji: '🐦' }
+];
+
 // Pen configurations - all purple, same pen with 4 modes
 const PEN_CONFIGS = [
-    { id: 1, name: 'Drum', color: 0xb388eb, x: -4, emoji: '🥁' },
-    { id: 2, name: 'Frog', color: 0xb388eb, x: -1.5, emoji: '🐸' },
-    { id: 3, name: 'Fairy', color: 0xb388eb, x: 1.5, emoji: '🧚' },
-    { id: 4, name: 'Robin', color: 0xb388eb, x: 4, emoji: '🐦' }
+    { id: 1, name: 'Drum', color: 0xb388eb, x: -4, emoji: '🥁', modeIndex: 0 },
+    { id: 2, name: 'Frog', color: 0xb388eb, x: -1.5, emoji: '🐸', modeIndex: 1 },
+    { id: 3, name: 'Fairy', color: 0xb388eb, x: 1.5, emoji: '🧚', modeIndex: 2 },
+    { id: 4, name: 'Robin', color: 0xb388eb, x: 4, emoji: '🐦', modeIndex: 3 }
 ];
+
+// Track mouse position for click detection
+let mouseDownPos = { x: 0, y: 0 };
+let isDragging = false;
+const CLICK_THRESHOLD = 5; // pixels
 
 function init() {
     // Scene - darker for bake, lightened after
@@ -771,6 +784,8 @@ function createPens() {
         penGroup.userData = {
             type: 'pen',
             id: config.id,
+            originalId: config.id, // Fixed ID for this physical pen
+            modeIndex: config.modeIndex, // Current mode (0-3)
             name: config.name,
             color: config.color,
             light: penLight,
@@ -949,6 +964,8 @@ function updateMouse(event) {
 
 function onMouseDown(event) {
     updateMouse(event);
+    mouseDownPos = { x: event.clientX, y: event.clientY };
+    isDragging = false;
     
     // Check if clicking on a pen
     raycaster.setFromCamera(mouse, camera);
@@ -966,6 +983,13 @@ function onMouseMove(event) {
     updateMouse(event);
     
     if (draggedPen) {
+        // Check if we've moved enough to count as dragging
+        const dx = event.clientX - mouseDownPos.x;
+        const dy = event.clientY - mouseDownPos.y;
+        if (Math.sqrt(dx * dx + dy * dy) > CLICK_THRESHOLD) {
+            isDragging = true;
+        }
+        
         // Move pen along drag plane
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObject(dragPlane);
@@ -984,8 +1008,60 @@ function onMouseMove(event) {
 
 function onMouseUp(event) {
     if (draggedPen) {
+        // If we didn't drag, it's a click - cycle pen mode
+        if (!isDragging) {
+            cyclePenMode(draggedPen);
+        }
         controls.enabled = true;
         draggedPen = null;
+    }
+}
+
+function cyclePenMode(pen) {
+    const physicalId = pen.userData.originalId;
+    
+    // Get current mode index and cycle to next
+    let modeIndex = pen.userData.modeIndex || 0;
+    modeIndex = (modeIndex + 1) % PEN_MODES.length;
+    
+    const newMode = PEN_MODES[modeIndex];
+    pen.userData.modeIndex = modeIndex;
+    pen.userData.id = newMode.id;
+    pen.userData.name = newMode.name;
+    
+    // Update the emoji on the pen cap
+    updatePenEmoji(pen, newMode.emoji);
+    
+    // Update audio engine mode mapping - this handles stopping old and starting new
+    if (audioEngine) {
+        audioEngine.setPenMode(physicalId, newMode.id);
+    }
+    
+    console.log(`Pen ${physicalId} switched to ${newMode.name}`);
+}
+
+function updatePenEmoji(pen, emoji) {
+    // Find the cap mesh (second child after body)
+    const capMesh = pen.children.find(child => 
+        child.geometry && child.geometry.type === 'CircleGeometry'
+    );
+    
+    if (capMesh) {
+        // Create new canvas texture with emoji
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#111111';
+        ctx.fillRect(0, 0, 128, 128);
+        ctx.font = '72px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(emoji, 64, 68);
+        
+        const newTexture = new THREE.CanvasTexture(canvas);
+        capMesh.material.map = newTexture;
+        capMesh.material.needsUpdate = true;
     }
 }
 
@@ -1132,7 +1208,7 @@ function checkPenOverColor(pen) {
     if (noteData) {
         if (pen.userData.currentNote !== noteData.note) {
             const wasPlaying = pen.userData.isPlaying;
-            const penId = pen.userData.id;
+            const penId = pen.userData.originalId;  // Use physical pen ID, not mode ID!
             
             // Pen entered new color
             pen.userData.currentNote = noteData.note;
@@ -1155,7 +1231,7 @@ function checkPenOverColor(pen) {
     } else {
         if (pen.userData.isPlaying) {
             // Pen left all colors/painting
-            const penId = pen.userData.id;
+            const penId = pen.userData.originalId;  // Use physical pen ID, not mode ID!
             pen.userData.currentNote = null;
             pen.userData.isPlaying = false;
             

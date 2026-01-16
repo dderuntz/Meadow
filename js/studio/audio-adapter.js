@@ -11,66 +11,86 @@ export class StudioAudioEngine {
         this.bpm = 100;
         this.noteFrequencyMap = createNoteFrequencyMap();
         
-        // Per-pen state and settings
-        this.penStates = {
-            1: { // Woodpecker - Drums
-                active: false,
+        // Map physical pen IDs to instrument mode IDs (can be changed via setPenMode)
+        this.penModeMap = { 1: 1, 2: 2, 3: 3, 4: 4 };
+        
+        // Per PHYSICAL PEN, per INSTRUMENT TYPE state
+        // Each pen has completely independent state for each instrument
+        this.penStates = {};
+        for (let i = 1; i <= 4; i++) {
+            this.penStates[i] = {
+                currentMode: i, // Track which mode is active
                 note: null,
                 frequency: null,
-                volume: 0.7,
-                pattern: null,
-                kitNumber: null,
-                scheduleTimeout: null,
-                startTime: null,
-                currentStep: 0,
-                buffers: null
-            },
-            2: { // Toad - Bass
-                active: false,
-                note: null,
-                frequency: null,
-                volume: 0.7,
-                octaveDrop: 3,
-                filterCutoff: 800,
-                filterResonance: 16,
-                envAmount: 2600,
-                oscillator: null,
-                filter: null,
-                gain: null,
-                scheduleTimeout: null,
-                pattern: this.createBassPattern()
-            },
-            3: { // Fairy - Arpeggio
-                active: false,
-                note: null,
-                frequency: null,
-                volume: 0.7,
-                octaveShift: -1,
-                octaves: 2,
-                sustain: 0.35,
-                frequencies: [],
-                currentIndex: 0,
-                scheduleTimeout: null,
-                startTime: null
-            },
-            4: { // Robin - Vibrato
-                active: false,
-                note: null,
-                frequency: null,
-                volume: 0.6,
-                octaveShift: 1,
-                vibratoRate: 5,
-                vibratoDepth: 2,
-                oscillators: [],
-                vibratoLFOs: [],
-                gain: null,
-                filter: null,
-                vibratoStarted: false,
-                vibratoTimeout: null
-            }
-        };
+                drum: this.createDrumState(),
+                bass: this.createBassState(),
+                arp: this.createArpState(),
+                vib: this.createVibState()
+            };
+        }
         
         this.drumKitLoader = null;
+        this.drumBuffers = null;
+    }
+    
+    createDrumState() {
+        return {
+            active: false,
+            volume: 0.7,
+            pattern: null,
+            kitNumber: null,
+            timeout: null,
+            startTime: null,
+            currentStep: 0
+        };
+    }
+    
+    createBassState() {
+        return {
+            active: false,
+            volume: 0.7,
+            octaveDrop: 3,
+            filterCutoff: 800,
+            filterResonance: 16,
+            envAmount: 2600,
+            oscillator: null,
+            filter: null,
+            gain: null,
+            pattern: this.createBassPattern(),
+            timeout: null,
+            currentFrequency: null
+        };
+    }
+    
+    createArpState() {
+        return {
+            active: false,
+            volume: 0.7,
+            octaveShift: -1,
+            octaves: 2,
+            sustain: 0.35,
+            frequencies: [],
+            currentIndex: 0,
+            timeout: null,
+            startTime: null
+        };
+    }
+    
+    createVibState() {
+        return {
+            active: false,
+            volume: 0.6,
+            octaveShift: 1,
+            vibratoRate: 5,
+            vibratoDepth: 2,
+            oscillators: [],
+            vibratoLFOs: [],
+            gain: null,
+            filter: null,
+            vibratoStarted: false,
+            timeout: null,
+            currentFrequency: null
+        };
     }
 
     createBassPattern() {
@@ -90,9 +110,9 @@ export class StudioAudioEngine {
     async init() {
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         
-        // Load drum samples
+        // Load drum samples (shared by all pens in drum mode)
         this.drumKitLoader = new DrumKitLoader(this.audioContext);
-        this.penStates[1].buffers = await this.drumKitLoader.loadAll();
+        this.drumBuffers = await this.drumKitLoader.loadAll();
         
         console.log('Studio audio engine initialized');
     }
@@ -106,89 +126,127 @@ export class StudioAudioEngine {
         }
     }
 
+    // Set which mode a physical pen uses
+    setPenMode(physicalPenId, modeId) {
+        const penState = this.penStates[physicalPenId];
+        if (!penState) return;
+        
+        const oldModeId = this.penModeMap[physicalPenId];
+        
+        // Stop the OLD instrument for THIS pen if it was playing
+        if (penState.note) {
+            switch (oldModeId) {
+                case 1: this.stopDrums(penState.drum); break;
+                case 2: this.stopBass(penState.bass); break;
+                case 3: this.stopArpeggio(penState.arp); break;
+                case 4: this.stopVibrato(penState.vib); break;
+            }
+        }
+        
+        // Update the mode
+        this.penModeMap[physicalPenId] = modeId;
+        penState.currentMode = modeId;
+        
+        // Start the NEW instrument if pen is currently over a note
+        if (penState.note && penState.frequency) {
+            switch (modeId) {
+                case 1: this.startDrums(penState.drum, penState.note); break;
+                case 2: this.startBass(penState.bass, penState.frequency); break;
+                case 3: this.startArpeggio(penState.arp, penState.note, penState.frequency); break;
+                case 4: this.startVibrato(penState.vib, penState.frequency); break;
+            }
+        }
+        
+        console.log(`Pen ${physicalPenId} now using mode ${modeId}`);
+    }
+    
     // Called when a pen enters a color
     async penEnter(penId, note, frequency) {
         await this.ensureAudioContext();
         
-        const state = this.penStates[penId];
-        if (!state) return;
+        const penState = this.penStates[penId];
+        const modeId = this.penModeMap[penId] || penId;
+        if (!penState) return;
         
-        state.active = true;
-        state.note = note;
-        state.frequency = frequency;
+        penState.note = note;
+        penState.frequency = frequency;
         
-        switch (penId) {
-            case 1: this.startDrums(state, note); break;
-            case 2: this.startBass(state, frequency); break;
-            case 3: this.startArpeggio(state, note, frequency); break;
-            case 4: this.startVibrato(state, frequency); break;
+        switch (modeId) {
+            case 1: this.startDrums(penState.drum, note); break;
+            case 2: this.startBass(penState.bass, frequency); break;
+            case 3: this.startArpeggio(penState.arp, note, frequency); break;
+            case 4: this.startVibrato(penState.vib, frequency); break;
         }
     }
 
     // Called when a pen leaves all colors
     penLeave(penId) {
-        const state = this.penStates[penId];
-        if (!state) return;
+        const penState = this.penStates[penId];
+        const modeId = this.penModeMap[penId] || penId;
+        if (!penState) return;
         
-        state.active = false;
-        state.note = null;
-        state.frequency = null;
+        penState.note = null;
+        penState.frequency = null;
         
-        switch (penId) {
-            case 1: this.stopDrums(state); break;
-            case 2: this.stopBass(state); break;
-            case 3: this.stopArpeggio(state); break;
-            case 4: this.stopVibrato(state); break;
+        switch (modeId) {
+            case 1: this.stopDrums(penState.drum); break;
+            case 2: this.stopBass(penState.bass); break;
+            case 3: this.stopArpeggio(penState.arp); break;
+            case 4: this.stopVibrato(penState.vib); break;
         }
     }
 
     // Called when pen moves to different note while still on paper
     penChange(penId, note, frequency) {
-        const state = this.penStates[penId];
-        if (!state || !state.active) return;
+        const penState = this.penStates[penId];
+        const modeId = this.penModeMap[penId] || penId;
+        if (!penState || !penState.note) return;
         
-        state.note = note;
-        state.frequency = frequency;
+        penState.note = note;
+        penState.frequency = frequency;
         
         // Each instrument handles note changes differently
-        switch (penId) {
+        switch (modeId) {
             case 1: 
                 // Drums - update pattern for new note
                 const { kitNumber, isVariation } = getKitForNote(note);
-                state.pattern = getKitPattern(kitNumber, isVariation);
-                state.kitNumber = kitNumber;
+                penState.drum.pattern = getKitPattern(kitNumber, isVariation);
+                penState.drum.kitNumber = kitNumber;
                 break;
             case 2:
-                // Bass - update oscillator frequency
-                if (state.oscillator) {
-                    const adjFreq = frequency / Math.pow(2, state.octaveDrop);
-                    state.oscillator.frequency.setValueAtTime(adjFreq, this.audioContext.currentTime);
+                // Bass - update frequency (used on next pattern iteration)
+                const bassState = penState.bass;
+                bassState.currentFrequency = frequency;
+                if (bassState.oscillator) {
+                    const adjFreq = frequency / Math.pow(2, bassState.octaveDrop);
+                    bassState.oscillator.frequency.setValueAtTime(adjFreq, this.audioContext.currentTime);
                 }
                 break;
             case 3:
                 // Arpeggio - regenerate pattern
-                state.frequencies = generateArpeggioPattern(
+                penState.arp.frequencies = generateArpeggioPattern(
                     { dataset: { note, frequency } },
-                    { happyChords: true, octaves: state.octaves, noteFrequencyMap: this.noteFrequencyMap }
+                    { happyChords: true, octaves: penState.arp.octaves, noteFrequencyMap: this.noteFrequencyMap }
                 );
                 break;
             case 4:
                 // Vibrato - shift note
-                this.shiftVibratoNote(state, frequency);
+                this.shiftVibratoNote(penState.vib, frequency);
                 break;
         }
     }
 
-    // ==================== DRUMS (Pen 1) ====================
+    // ==================== DRUMS ====================
     
     startDrums(state, note) {
-        if (!state.buffers) return;
+        if (!this.drumBuffers) return;
         
         const { kitNumber, isVariation } = getKitForNote(note);
         state.pattern = getKitPattern(kitNumber, isVariation);
         state.kitNumber = kitNumber;
         state.startTime = this.audioContext.currentTime;
         state.currentStep = 0;
+        state.active = true;
         
         this.scheduleDrumStep(state);
     }
@@ -215,17 +273,17 @@ export class StudioAudioEngine {
         const nextStepTime = state.startTime + (state.currentStep * sixteenthNote);
         const delay = (nextStepTime - currentTime) * 1000;
         
-        if (state.scheduleTimeout) clearTimeout(state.scheduleTimeout);
+        if (state.timeout) clearTimeout(state.timeout);
         
         if (state.active && delay > 0) {
-            state.scheduleTimeout = setTimeout(() => this.scheduleDrumStep(state), Math.min(delay, 5000));
+            state.timeout = setTimeout(() => this.scheduleDrumStep(state), Math.min(delay, 5000));
         } else if (state.active) {
-            state.scheduleTimeout = setTimeout(() => this.scheduleDrumStep(state), 10);
+            state.timeout = setTimeout(() => this.scheduleDrumStep(state), 10);
         }
     }
 
     playDrumSound(state, time, sound) {
-        if (!state.buffers) return;
+        if (!this.drumBuffers) return;
         
         let bufferKey = null;
         switch (state.kitNumber) {
@@ -237,7 +295,7 @@ export class StudioAudioEngine {
             case 6: bufferKey = 'kit6_xylo'; break;
         }
         
-        const buffer = state.buffers[bufferKey];
+        const buffer = this.drumBuffers[bufferKey];
         if (!buffer) return;
         
         const source = this.audioContext.createBufferSource();
@@ -253,20 +311,24 @@ export class StudioAudioEngine {
     }
 
     stopDrums(state) {
-        if (state.scheduleTimeout) {
-            clearTimeout(state.scheduleTimeout);
-            state.scheduleTimeout = null;
+        state.active = false;
+        if (state.timeout) {
+            clearTimeout(state.timeout);
+            state.timeout = null;
         }
         state.startTime = null;
         state.currentStep = 0;
     }
 
-    // ==================== BASS (Pen 2) ====================
+    // ==================== BASS ====================
     
     startBass(state, frequency) {
         if (state.oscillator) {
             try { state.oscillator.stop(); } catch (e) {}
         }
+        
+        state.active = true;
+        state.currentFrequency = frequency;
         
         const adjFreq = frequency / Math.pow(2, state.octaveDrop);
         
@@ -302,9 +364,11 @@ export class StudioAudioEngine {
         let startTime = currentTime + 0.05;
         let currentStepTime = startTime;
         
+        const frequency = state.currentFrequency || 220;
+        
         state.pattern.forEach((step) => {
             if (step.play) {
-                const adjFreq = state.frequency / Math.pow(2, state.octaveDrop);
+                const adjFreq = frequency / Math.pow(2, state.octaveDrop);
                 const noteFreq = step.octaveUp ? adjFreq * 2 : adjFreq;
                 
                 state.oscillator.frequency.setValueAtTime(noteFreq, currentStepTime);
@@ -324,18 +388,19 @@ export class StudioAudioEngine {
         });
         
         // Schedule next pattern
-        if (state.scheduleTimeout) clearTimeout(state.scheduleTimeout);
+        if (state.timeout) clearTimeout(state.timeout);
         
         const delay = patternDuration * 1000;
         if (state.active) {
-            state.scheduleTimeout = setTimeout(() => this.scheduleBassPattern(state), delay);
+            state.timeout = setTimeout(() => this.scheduleBassPattern(state), delay);
         }
     }
 
     stopBass(state) {
-        if (state.scheduleTimeout) {
-            clearTimeout(state.scheduleTimeout);
-            state.scheduleTimeout = null;
+        state.active = false;
+        if (state.timeout) {
+            clearTimeout(state.timeout);
+            state.timeout = null;
         }
         if (state.oscillator) {
             try { state.oscillator.stop(); } catch (e) {}
@@ -343,9 +408,10 @@ export class StudioAudioEngine {
         }
     }
 
-    // ==================== ARPEGGIO (Pen 3) ====================
+    // ==================== ARPEGGIO ====================
     
     startArpeggio(state, note, frequency) {
+        state.active = true;
         state.frequencies = generateArpeggioPattern(
             { dataset: { note, frequency } },
             { happyChords: true, octaves: state.octaves, noteFrequencyMap: this.noteFrequencyMap }
@@ -378,12 +444,12 @@ export class StudioAudioEngine {
         const nextNoteTime = state.startTime + (state.currentIndex * noteInterval);
         const delay = (nextNoteTime - currentTime) * 1000;
         
-        if (state.scheduleTimeout) clearTimeout(state.scheduleTimeout);
+        if (state.timeout) clearTimeout(state.timeout);
         
         if (state.active && delay > 0) {
-            state.scheduleTimeout = setTimeout(() => this.scheduleArpeggioNote(state), Math.min(delay, 5000));
+            state.timeout = setTimeout(() => this.scheduleArpeggioNote(state), Math.min(delay, 5000));
         } else if (state.active) {
-            state.scheduleTimeout = setTimeout(() => this.scheduleArpeggioNote(state), 10);
+            state.timeout = setTimeout(() => this.scheduleArpeggioNote(state), 10);
         }
     }
 
@@ -409,20 +475,22 @@ export class StudioAudioEngine {
     }
 
     stopArpeggio(state) {
-        if (state.scheduleTimeout) {
-            clearTimeout(state.scheduleTimeout);
-            state.scheduleTimeout = null;
+        state.active = false;
+        if (state.timeout) {
+            clearTimeout(state.timeout);
+            state.timeout = null;
         }
         state.frequencies = [];
         state.currentIndex = 0;
         state.startTime = null;
     }
 
-    // ==================== VIBRATO (Pen 4) ====================
+    // ==================== VIBRATO ====================
     
     startVibrato(state, frequency) {
         this.stopVibratoOscillators(state);
         
+        state.active = true;
         state.vibratoStarted = false;
         state.oscillators = [];
         state.vibratoLFOs = [];
@@ -465,7 +533,7 @@ export class StudioAudioEngine {
         state.oscillators.forEach(osc => osc.start());
         
         // Start vibrato after delay
-        state.vibratoTimeout = setTimeout(() => this.startVibratoLFO(state), 300);
+        state.timeout = setTimeout(() => this.startVibratoLFO(state), 300);
     }
 
     startVibratoLFO(state) {
@@ -521,9 +589,10 @@ export class StudioAudioEngine {
     }
 
     stopVibrato(state) {
-        if (state.vibratoTimeout) {
-            clearTimeout(state.vibratoTimeout);
-            state.vibratoTimeout = null;
+        state.active = false;
+        if (state.timeout) {
+            clearTimeout(state.timeout);
+            state.timeout = null;
         }
         
         if (state.gain && this.audioContext) {
