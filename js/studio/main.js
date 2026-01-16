@@ -991,7 +991,8 @@ function createPens() {
             light: penLight,
             screenLight: screenLight, // Light that casts from screen
             isPlaying: false,
-            currentNote: null
+            currentNote: null,
+            lastColorChangeTime: 0 // Cooldown tracking
         };
         
         pens.push(penGroup);
@@ -1684,8 +1685,11 @@ function checkPenOverColor(pen) {
         }
     }
     
+    const now = Date.now();
+    const canChangeColor = (now - pen.userData.lastColorChangeTime) >= COLOR_CHANGE_COOLDOWN;
+    
     if (noteData) {
-        if (pen.userData.currentNote !== noteData.note) {
+        if (pen.userData.currentNote !== noteData.note && canChangeColor) {
             const wasPlaying = pen.userData.isPlaying;
             const penId = pen.userData.originalId;  // Use physical pen ID, not mode ID!
             
@@ -1693,6 +1697,7 @@ function checkPenOverColor(pen) {
             pen.userData.currentNote = noteData.note;
             pen.userData.isPlaying = true;
             pen.userData.specialColor = null;
+            pen.userData.lastColorChangeTime = now; // Start cooldown
             
             // Update screen to show sensed color (will lerp)
             const screenHue = noteData.sampledHue !== undefined ? noteData.sampledHue * 360 : noteData.hue;
@@ -1713,9 +1718,10 @@ function checkPenOverColor(pen) {
             }
         }
     } else if (specialColorData) {
-        // Over white or black - update screen but stop any audio
-        if (pen.userData.specialColor !== specialColorData) {
+        // Over white or black - update screen but stop any audio (with cooldown)
+        if (pen.userData.specialColor !== specialColorData && canChangeColor) {
             pen.userData.specialColor = specialColorData;
+            pen.userData.lastColorChangeTime = now; // Start cooldown
             
             // Stop audio if was playing
             if (pen.userData.isPlaying) {
@@ -1755,6 +1761,7 @@ function checkPenOverColor(pen) {
 
 let lastPenCheck = 0;
 const PEN_CHECK_INTERVAL = 100; // Check every 100ms
+const COLOR_CHANGE_COOLDOWN = 150; // Min time (ms) between color changes
 let lastCameraCheck = 0;
 
 function animate() {
