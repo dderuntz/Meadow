@@ -619,15 +619,32 @@ function samplePaintingColor(uv) {
     
     // UV coordinates: (0,0) is bottom-left, (1,1) is top-right
     // Image coordinates: (0,0) is top-left
-    const x = Math.floor(uv.x * (paintingCanvas.width - 1));
-    const y = Math.floor((1 - uv.y) * (paintingCanvas.height - 1)); // Flip Y
+    const centerX = Math.floor(uv.x * (paintingCanvas.width - 1));
+    const centerY = Math.floor((1 - uv.y) * (paintingCanvas.height - 1)); // Flip Y
     
-    const index = (y * paintingCanvas.width + x) * 4;
-    const r = paintingImageData.data[index];
-    const g = paintingImageData.data[index + 1];
-    const b = paintingImageData.data[index + 2];
+    // Sample a 5x5 area and average the colors
+    const sampleRadius = 2; // 5x5 grid
+    let totalR = 0, totalG = 0, totalB = 0;
+    let sampleCount = 0;
     
-    return { r, g, b };
+    for (let dy = -sampleRadius; dy <= sampleRadius; dy++) {
+        for (let dx = -sampleRadius; dx <= sampleRadius; dx++) {
+            const x = Math.max(0, Math.min(paintingCanvas.width - 1, centerX + dx));
+            const y = Math.max(0, Math.min(paintingCanvas.height - 1, centerY + dy));
+            
+            const index = (y * paintingCanvas.width + x) * 4;
+            totalR += paintingImageData.data[index];
+            totalG += paintingImageData.data[index + 1];
+            totalB += paintingImageData.data[index + 2];
+            sampleCount++;
+        }
+    }
+    
+    return {
+        r: Math.round(totalR / sampleCount),
+        g: Math.round(totalG / sampleCount),
+        b: Math.round(totalB / sampleCount)
+    };
 }
 
 function rgbToHsl(r, g, b) {
@@ -1661,16 +1678,25 @@ function checkPenOverColor(pen) {
             if (rgb) {
                 const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
                 
-                // Check for white (high lightness, low saturation)
-                if (hsl.l > 0.85 && hsl.s < 0.15) {
+                // Check white/black FIRST based on lightness (before hue)
+                // Very light areas are white (even with some color cast like blue clouds)
+                if (hsl.l > 0.8) {
                     specialColorData = 'white';
                 }
-                // Check for black (low lightness)
+                // Light areas with low saturation are also white
+                else if (hsl.l > 0.65 && hsl.s < 0.25) {
+                    specialColorData = 'white';
+                }
+                // Very dark areas are black
                 else if (hsl.l < 0.15) {
                     specialColorData = 'black';
                 }
-                // Only play if saturation is high enough (skip very gray areas)
-                else if (hsl.s > 0.15) {
+                // Dark areas with low saturation are also black
+                else if (hsl.l < 0.3 && hsl.s < 0.2) {
+                    specialColorData = 'black';
+                }
+                // Otherwise check if saturated enough to be a color
+                else if (hsl.s > 0.2) {
                     const closestNote = findClosestNoteByHue(hsl.h);
                     noteData = {
                         note: closestNote.note,
@@ -1680,6 +1706,10 @@ function checkPenOverColor(pen) {
                         sampledHue: hsl.h,
                         sampledSat: hsl.s
                     };
+                }
+                // Gray areas (not saturated enough) - treat as white/black based on lightness
+                else {
+                    specialColorData = hsl.l > 0.5 ? 'white' : 'black';
                 }
             }
         }
@@ -1700,7 +1730,8 @@ function checkPenOverColor(pen) {
             pen.userData.lastColorChangeTime = now; // Start cooldown
             
             // Update screen to show sensed color (will lerp)
-            const screenHue = noteData.sampledHue !== undefined ? noteData.sampledHue * 360 : noteData.hue;
+            // sampledHue is already 0-360 from rgbToHsl, noteData.hue is also 0-360
+            const screenHue = noteData.sampledHue !== undefined ? noteData.sampledHue : noteData.hue;
             setScreenTargetHue(pen, screenHue);
             
             // Turn on pen light - TEMPORARILY DISABLED
