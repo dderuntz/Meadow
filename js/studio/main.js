@@ -26,6 +26,11 @@ let paintingCanvas = null;
 const PAINTING_WIDTH = 9;  // Will be adjusted by aspect ratio
 const PAINTING_HEIGHT = 7;
 
+// Groups for positioning
+let paperGroup = null;
+let paintingGroup = null;
+let paintingFrame = null; // Reference for thickness control
+
 // Post-processing
 let composer, colorCorrectionPass;
 const colorCorrectionShader = {
@@ -120,8 +125,7 @@ function init() {
     
     // Camera - looking down at paper at an angle
     camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(-6.9, 14.2, 14.8);
-    camera.lookAt(0, 0, 0);
+    camera.position.set(-2.4, 14.9, 16.1);
     
     // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -173,6 +177,7 @@ function init() {
     controls.maxPolarAngle = Math.PI / 2.2; // Don't let camera go below paper
     controls.minDistance = 10;
     controls.maxDistance = 40;
+    controls.target.set(2.9, 1.6, 3.7); // Look at this point
     
     // Raycaster for pen interaction
     raycaster = new THREE.Raycaster();
@@ -273,6 +278,11 @@ function setupLighting() {
 }
 
 function createPaper() {
+    // Create group for paper and all its elements
+    paperGroup = new THREE.Group();
+    paperGroup.position.set(-2, 0.25, 2.5); // X=-2, Z=2.5, Y=0.25
+    scene.add(paperGroup);
+    
     // Paper base - slightly off-white with subtle texture
     const paperGeo = new THREE.BoxGeometry(PAPER_WIDTH, 0.1, PAPER_HEIGHT);
     const paperMat = new THREE.MeshStandardMaterial({
@@ -284,9 +294,10 @@ function createPaper() {
     paper.receiveShadow = true;
     paper.castShadow = true;
     paper.position.y = 0.3;
-    scene.add(paper);
+    paper.scale.y = 0.6; // Default thickness
+    paperGroup.add(paper);
     
-    // Mary Had a Little Lamb song pattern - snake layout
+    // Mary Had a Little Lamb song pattern - no gaps between rows
     const MARY_LAMB = [
         { note: 'E', frequency: 329.63 },
         { note: 'D', frequency: 293.66 },
@@ -324,12 +335,11 @@ function createPaper() {
     
     const margin = 0.8;
     
-    // Snake layout - tiles per row and tile size
+    // Layout - tiles per row and tile size (no gaps)
     const tilesPerRow = 9;
     const totalSongWidth = PAPER_WIDTH - margin * 2;
     const songTileWidth = totalSongWidth / tilesPerRow;
     const songTileHeight = 2.5; // Same as rainbow at bottom
-    const rowGap = 0.1;
     
     // Add "Mary Had a Little Lamb" title text
     const titleCanvas = document.createElement('canvas');
@@ -352,7 +362,7 @@ function createPaper() {
     const titleMesh = new THREE.Mesh(titleGeo, titleMat);
     titleMesh.rotation.x = -Math.PI / 2;
     titleMesh.position.set(0, 0.37, -PAPER_HEIGHT / 2 + 1.2);
-    scene.add(titleMesh);
+    paperGroup.add(titleMesh);
     
     MARY_LAMB.forEach((noteData, i) => {
         const row = Math.floor(i / tilesPerRow);
@@ -370,7 +380,7 @@ function createPaper() {
         const tile = new THREE.Mesh(tileGeo, tileMat);
         tile.position.x = -totalSongWidth / 2 + songTileWidth / 2 + col * songTileWidth;
         tile.position.y = 0.36;
-        tile.position.z = -PAPER_HEIGHT / 2 + margin + 1.8 + songTileHeight / 2 + row * (songTileHeight + rowGap); // Extra offset for title
+        tile.position.z = -PAPER_HEIGHT / 2 + margin + 1.8 + songTileHeight / 2 + row * songTileHeight; // No gap between rows
         tile.receiveShadow = true;
         
         tile.userData = {
@@ -380,10 +390,10 @@ function createPaper() {
             hue: hue
         };
         
-        scene.add(tile);
+        paperGroup.add(tile);
     });
     
-    // Add lamb emoji to the last empty spot (row 2, col 0 since it snakes back)
+    // Add lamb emoji to the last empty spot (row 2, col 8 - end of third row)
     const lambCanvas = document.createElement('canvas');
     lambCanvas.width = 128;
     lambCanvas.height = 128;
@@ -406,9 +416,9 @@ function createPaper() {
     // Position at last spot (row 2, col 8 - end of third row)
     lambTile.position.x = -totalSongWidth / 2 + songTileWidth / 2 + 8 * songTileWidth;
     lambTile.position.y = 0.36;
-    lambTile.position.z = -PAPER_HEIGHT / 2 + margin + 1.8 + songTileHeight / 2 + 2 * (songTileHeight + rowGap);
+    lambTile.position.z = -PAPER_HEIGHT / 2 + margin + 1.8 + songTileHeight / 2 + 2 * songTileHeight; // No gap
     lambTile.receiveShadow = true;
-    scene.add(lambTile);
+    paperGroup.add(lambTile);
     
     // Create chromatic color strips on the paper - bottom centered with margin
     const totalStripWidth = PAPER_WIDTH - margin * 2;
@@ -437,18 +447,18 @@ function createPaper() {
             hue: noteData.hue
         };
         
-        scene.add(strip);
+        paperGroup.add(strip);
     });
     
-    // Wood table with texture and contrast
-    const tableGeo = new THREE.BoxGeometry(24, 0.8, 28);
+    // Wood table with texture and contrast (double width for paper + painting)
+    const tableGeo = new THREE.BoxGeometry(48, 0.8, 28);
     
     // Load separate texture instance for the table (avoid clone issues)
     const tableTextureLoader = new THREE.TextureLoader();
     tableTexture = tableTextureLoader.load('images/wood.png');
     tableTexture.wrapS = THREE.RepeatWrapping;
     tableTexture.wrapT = THREE.RepeatWrapping;
-    tableTexture.repeat.set(1, 2.5);
+    tableTexture.repeat.set(2, 2.5); // Double X repeat for wider table
     
     tableMaterial = new THREE.MeshPhysicalMaterial({
         map: tableTexture,
@@ -492,7 +502,13 @@ function addContrastToMaterial(material) {
 }
 
 function createPaintingCanvas() {
-    const textureLoader = new THREE.TextureLoader();
+    // Create group for painting and its frame
+    paintingGroup = new THREE.Group();
+    paintingGroup.position.set(8.5, -0.15, 1.0); // X=8.5, Z=1.0, Y=-0.15
+    paintingGroup.scale.set(1.8, 1.8, 1.8); // Scale=1.8
+    paintingGroup.rotation.y = -15 * Math.PI / 180; // Rotation=-15°
+    scene.add(paintingGroup);
+    
     const img = new Image();
     img.crossOrigin = 'anonymous';
     
@@ -511,18 +527,19 @@ function createPaintingCanvas() {
         const paintingHeight = PAINTING_HEIGHT;
         const borderSize = 0.3;
         
-        // Create white border frame
+        // Create white border frame (centered in group)
         const frameGeo = new THREE.BoxGeometry(paintingWidth + borderSize * 2, 0.1, paintingHeight + borderSize * 2);
         const frameMat = new THREE.MeshStandardMaterial({
             color: 0xffffff,
             roughness: 0.9,
             metalness: 0
         });
-        const frame = new THREE.Mesh(frameGeo, frameMat);
-        frame.receiveShadow = true;
-        frame.castShadow = true;
-        frame.position.set(PAPER_WIDTH / 2 + paintingWidth / 2 + borderSize + 1.5, 0.3, 0);
-        scene.add(frame);
+        paintingFrame = new THREE.Mesh(frameGeo, frameMat);
+        paintingFrame.receiveShadow = true;
+        paintingFrame.castShadow = true;
+        paintingFrame.position.set(0, 0.3, 0); // Centered in group
+        paintingFrame.scale.y = 0.6; // Default thickness (same as paper)
+        paintingGroup.add(paintingFrame);
         
         // Create painting surface
         const paintingTexture = new THREE.Texture(img);
@@ -537,11 +554,7 @@ function createPaintingCanvas() {
         
         paintingMesh = new THREE.Mesh(paintingGeo, paintingMat);
         paintingMesh.rotation.x = -Math.PI / 2;
-        paintingMesh.position.set(
-            PAPER_WIDTH / 2 + paintingWidth / 2 + borderSize + 1.5,
-            0.36,
-            0
-        );
+        paintingMesh.position.set(0, 0.36, 0); // Centered in group
         paintingMesh.receiveShadow = true;
         
         // Store dimensions for UV calculations
@@ -553,12 +566,12 @@ function createPaintingCanvas() {
             imageHeight: img.height
         };
         
-        scene.add(paintingMesh);
+        paintingGroup.add(paintingMesh);
         
         console.log('Painting canvas loaded:', img.width, 'x', img.height);
     };
     
-    img.src = 'images/still-life-with-oranges-1881.jpeg';
+    img.src = 'images/tahiti.png';
 }
 
 function samplePaintingColor(uv) {
@@ -783,20 +796,131 @@ function setupEventListeners() {
 }
 
 function setupLightingControls() {
-    // Pen height
+    // Pen height (gap above surface)
     const penHeightSlider = document.getElementById('penHeightSlider');
     const penHeightValue = document.getElementById('penHeightValue');
     if (penHeightSlider) {
         penHeightSlider.addEventListener('input', (e) => {
             const value = parseFloat(e.target.value);
-            pens.forEach(pen => {
-                pen.position.y = value;
-            });
-            dragPlane.position.y = value;
+            // Pens will auto-adjust via adjustPenHeight in checkPenOverColor
+            // Just update display and trigger recalc
             penHeightValue.textContent = value.toFixed(2);
+            pens.forEach(pen => adjustPenHeight(pen));
         });
     }
     
+    // Sheet thickness (affects both paper and painting frame)
+    const sheetThicknessSlider = document.getElementById('sheetThicknessSlider');
+    const sheetThicknessValue = document.getElementById('sheetThicknessValue');
+    if (sheetThicknessSlider) {
+        sheetThicknessSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paper) paper.scale.y = value;
+            if (paintingFrame) paintingFrame.scale.y = value;
+            sheetThicknessValue.textContent = value.toFixed(1);
+        });
+    }
+    
+    // Paper position X
+    const paperXSlider = document.getElementById('paperXSlider');
+    const paperXValue = document.getElementById('paperXValue');
+    if (paperXSlider) {
+        paperXSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paperGroup) paperGroup.position.x = value;
+            paperXValue.textContent = value.toFixed(1);
+        });
+    }
+    
+    // Paper position Y (Z in 3D space since Y is up)
+    const paperYSlider = document.getElementById('paperYSlider');
+    const paperYValue = document.getElementById('paperYValue');
+    if (paperYSlider) {
+        paperYSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paperGroup) paperGroup.position.z = value;
+            paperYValue.textContent = value.toFixed(1);
+        });
+    }
+    
+    // Paper height (3D Y)
+    const paperHSlider = document.getElementById('paperHSlider');
+    const paperHValue = document.getElementById('paperHValue');
+    if (paperHSlider) {
+        paperHSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paperGroup) paperGroup.position.y = value;
+            paperHValue.textContent = value.toFixed(2);
+        });
+    }
+    
+    // Paper rotation
+    const paperRotSlider = document.getElementById('paperRotSlider');
+    const paperRotValue = document.getElementById('paperRotValue');
+    if (paperRotSlider) {
+        paperRotSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paperGroup) paperGroup.rotation.y = value * Math.PI / 180;
+            paperRotValue.textContent = value + '°';
+        });
+    }
+    
+    // Painting position X
+    const paintXSlider = document.getElementById('paintXSlider');
+    const paintXValue = document.getElementById('paintXValue');
+    if (paintXSlider) {
+        paintXSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paintingGroup) paintingGroup.position.x = value;
+            paintXValue.textContent = value.toFixed(1);
+        });
+    }
+    
+    // Painting position Y (Z in 3D space)
+    const paintYSlider = document.getElementById('paintYSlider');
+    const paintYValue = document.getElementById('paintYValue');
+    if (paintYSlider) {
+        paintYSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paintingGroup) paintingGroup.position.z = value;
+            paintYValue.textContent = value.toFixed(1);
+        });
+    }
+    
+    // Painting height (3D Y)
+    const paintHSlider = document.getElementById('paintHSlider');
+    const paintHValue = document.getElementById('paintHValue');
+    if (paintHSlider) {
+        paintHSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paintingGroup) paintingGroup.position.y = value;
+            paintHValue.textContent = value.toFixed(2);
+        });
+    }
+    
+    // Painting scale
+    const paintScaleSlider = document.getElementById('paintScaleSlider');
+    const paintScaleValue = document.getElementById('paintScaleValue');
+    if (paintScaleSlider) {
+        paintScaleSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paintingGroup) {
+                paintingGroup.scale.set(value, value, value);
+            }
+            paintScaleValue.textContent = value.toFixed(1);
+        });
+    }
+    
+    // Painting rotation
+    const paintRotSlider = document.getElementById('paintRotSlider');
+    const paintRotValue = document.getElementById('paintRotValue');
+    if (paintRotSlider) {
+        paintRotSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            if (paintingGroup) paintingGroup.rotation.y = value * Math.PI / 180;
+            paintRotValue.textContent = value + '°';
+        });
+    }
 }
 
 function rebakeCubeCamera() {
@@ -848,11 +972,9 @@ function onMouseMove(event) {
         
         if (intersects.length > 0) {
             const point = intersects[0].point;
-            // Constrain to table area (paper + painting + margins)
-            const margin = 1;
-            const maxX = PAPER_WIDTH / 2 + 12; // Extended to reach painting
-            draggedPen.position.x = Math.max(-PAPER_WIDTH/2 - margin, Math.min(maxX, point.x));
-            draggedPen.position.z = Math.max(-PAPER_HEIGHT/2 - margin, Math.min(PAPER_HEIGHT/2 + margin, point.z));
+            // Constrain to full table area (48 wide x 28 deep)
+            draggedPen.position.x = Math.max(-24, Math.min(24, point.x));
+            draggedPen.position.z = Math.max(-14, Math.min(14, point.z));
             
             // Check what color the pen is over
             checkPenOverColor(draggedPen);
@@ -888,7 +1010,61 @@ function onTouchEnd(event) {
     onMouseUp(event);
 }
 
+// Get the base pen height from slider (or default)
+function getBasePenHeight() {
+    const slider = document.getElementById('penHeightSlider');
+    return slider ? parseFloat(slider.value) : 0.6;
+}
+
+// Adjust pen height based on surface underneath (sets target, lerped in animate)
+function adjustPenHeight(pen) {
+    const basePenHeight = getBasePenHeight();
+    const tableHeight = 0.3; // Table top surface
+    
+    // Cast ray downward from high above to detect surfaces
+    const rayOrigin = new THREE.Vector3(pen.position.x, 5, pen.position.z);
+    const downRay = new THREE.Raycaster(rayOrigin, new THREE.Vector3(0, -1, 0));
+    
+    // Check paper
+    let surfaceY = tableHeight;
+    if (paper) {
+        const paperHits = downRay.intersectObject(paper);
+        if (paperHits.length > 0) {
+            surfaceY = Math.max(surfaceY, paperHits[0].point.y);
+        }
+    }
+    
+    // Check painting frame
+    if (paintingFrame) {
+        const frameHits = downRay.intersectObject(paintingFrame);
+        if (frameHits.length > 0) {
+            surfaceY = Math.max(surfaceY, frameHits[0].point.y);
+        }
+    }
+    
+    // Set target height (lerped in animate loop)
+    pen.userData.targetY = surfaceY + basePenHeight;
+    
+    // Initialize current Y if not set
+    if (pen.userData.targetY !== undefined && pen.position.y < 0.1) {
+        pen.position.y = pen.userData.targetY;
+    }
+}
+
+// Lerp pen heights towards targets
+function updatePenHeights() {
+    const lerpFactor = 0.15; // Adjust for faster/slower easing
+    pens.forEach(pen => {
+        if (pen.userData.targetY !== undefined) {
+            pen.position.y += (pen.userData.targetY - pen.position.y) * lerpFactor;
+        }
+    });
+}
+
 function checkPenOverColor(pen) {
+    // Adjust pen height based on surface
+    adjustPenHeight(pen);
+    
     // Cast ray downward from pen position
     // Pen sits on surface, cast from above to detect color strips and painting
     const rayOrigin = new THREE.Vector3(
@@ -902,8 +1078,15 @@ function checkPenOverColor(pen) {
         new THREE.Vector3(0, -1, 0)
     );
     
-    // Find color strips
-    const colorStrips = scene.children.filter(obj => obj.userData?.type === 'colorStrip');
+    // Find color strips (now inside paperGroup)
+    const colorStrips = [];
+    if (paperGroup) {
+        paperGroup.traverse(obj => {
+            if (obj.userData?.type === 'colorStrip') {
+                colorStrips.push(obj);
+            }
+        });
+    }
     const intersects = downRay.intersectObjects(colorStrips);
     
     // Check painting separately
@@ -996,13 +1179,16 @@ function animate() {
     
     controls.update();
     
+    // Smoothly lerp pen heights
+    updatePenHeights();
+    
     // Update camera info display (throttled)
     const currentTime = Date.now();
     if (currentTime - lastCameraUpdate > 200) {
         lastCameraUpdate = currentTime;
         const camInfo = document.getElementById('cameraInfo');
         if (camInfo) {
-            camInfo.textContent = `Camera: x:${camera.position.x.toFixed(1)} y:${camera.position.y.toFixed(1)} z:${camera.position.z.toFixed(1)}`;
+            camInfo.innerHTML = `Cam pos: ${camera.position.x.toFixed(1)}, ${camera.position.y.toFixed(1)}, ${camera.position.z.toFixed(1)}<br>Cam target: ${controls.target.x.toFixed(1)}, ${controls.target.y.toFixed(1)}, ${controls.target.z.toFixed(1)}`;
         }
     }
     
