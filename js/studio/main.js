@@ -120,13 +120,13 @@ const PEN_MODES = [
 // Pen configurations - all purple, same pen with 4 modes
 // Defaults: 3 pens tipped on table, 1 (fairy) standing on paper playing
 const PEN_CONFIGS = [
-    { id: 1, name: 'Drum', color: 0xb388eb, emoji: '🥁', modeIndex: 0, 
+    { id: 1, name: 'Drum', color: 0xd5dee0, emoji: '🥁', modeIndex: 0, 
       defaultX: 0.2, defaultZ: -7.7, tipped: true },
-    { id: 2, name: 'Frog', color: 0xb388eb, emoji: '🐸', modeIndex: 1,
+    { id: 2, name: 'Frog', color: 0xd5dee0, emoji: '🐸', modeIndex: 1,
       defaultX: 7.4, defaultZ: -7.0, tipped: true },
-    { id: 3, name: 'Fairy', color: 0xb388eb, emoji: '🧚', modeIndex: 2,
+    { id: 3, name: 'Fairy', color: 0xd5dee0, emoji: '🧚', modeIndex: 2,
       defaultX: -5.0, defaultZ: 6.5, tipped: false }, // Standing in white gap - requires drag to play
-    { id: 4, name: 'Robin', color: 0xb388eb, emoji: '🐦', modeIndex: 3,
+    { id: 4, name: 'Robin', color: 0xd5dee0, emoji: '🐦', modeIndex: 3,
       defaultX: 5.4, defaultZ: 8.7, tipped: true }
 ];
 
@@ -667,48 +667,119 @@ function createPens() {
         const topBevelSegments = 8;
         const bottomBevelSegments = 4;
         
-        // Create pen body with beveled top and bottom using lathe geometry
-        const points = [];
+        // Split pen into bottom 2/3 (plastic) and top 1/3 (wood)
+        const woodStartHeight = penHeight * 0.67; // Where wood section begins
         
-        // Start at center bottom
-        points.push(new THREE.Vector2(0, 0));
+        // BOTTOM SECTION (plastic) - from bottom to woodStartHeight with chamfer
+        const chamferSize = 0.06; // Size of chamfer at junction
+        const chamferSteps = 3;
         
-        // Bottom bevel (4 segments of a quarter circle, going outward)
+        const bottomPoints = [];
+        bottomPoints.push(new THREE.Vector2(0, 0));
+        
+        // Bottom bevel
         for (let j = 0; j <= bottomBevelSegments; j++) {
             const angle = (Math.PI / 2) - (j / bottomBevelSegments) * (Math.PI / 2);
             const x = penRadius - bottomBevelRadius + Math.cos(angle) * bottomBevelRadius;
             const y = bottomBevelRadius - Math.sin(angle) * bottomBevelRadius;
-            points.push(new THREE.Vector2(x, y));
+            bottomPoints.push(new THREE.Vector2(x, y));
         }
         
+        // Straight body up to chamfer start
+        bottomPoints.push(new THREE.Vector2(penRadius, woodStartHeight - chamferSize));
+        
+        // 3-step chamfer at top of plastic section
+        for (let j = 1; j <= chamferSteps; j++) {
+            const t = j / chamferSteps;
+            const x = penRadius - (chamferSize * t * 0.5); // Slight inward angle
+            const y = woodStartHeight - chamferSize + (chamferSize * t);
+            bottomPoints.push(new THREE.Vector2(x, y));
+        }
+        
+        // Close the bottom section at the inside
+        bottomPoints.push(new THREE.Vector2(0, woodStartHeight));
+        
+        const bottomGeo = new THREE.LatheGeometry(bottomPoints, 32);
+        
+        // Plastic material
+        const bodyMat = new THREE.MeshPhysicalMaterial({
+            color: config.color,
+            roughness: 0.7,
+            metalness: 0.0,
+            clearcoat: 0.1,
+            clearcoatRoughness: 0.8,
+            reflectivity: 0.2,
+            envMapIntensity: 0.3
+        });
+        
+        const bottomBody = new THREE.Mesh(bottomGeo, bodyMat);
+        bottomBody.castShadow = true;
+        bottomBody.receiveShadow = true;
+        penGroup.add(bottomBody);
+        
+        // TOP SECTION (wood) - from woodStartHeight to top with bevel
+        const topPoints = [];
+        topPoints.push(new THREE.Vector2(0, woodStartHeight));
+        
+        // Start at the chamfer edge (slightly inward)
+        topPoints.push(new THREE.Vector2(penRadius - chamferSize * 0.5, woodStartHeight));
+        
+        // Small step out to full radius
+        topPoints.push(new THREE.Vector2(penRadius, woodStartHeight + chamferSize * 0.3));
+        
         // Straight body up to where top bevel starts
-        points.push(new THREE.Vector2(penRadius, penHeight - topBevelRadius));
+        topPoints.push(new THREE.Vector2(penRadius, penHeight - topBevelRadius));
         
         // Top bevel (8 segments of a quarter circle)
         for (let j = 0; j <= topBevelSegments; j++) {
             const angle = (j / topBevelSegments) * (Math.PI / 2);
             const x = penRadius - topBevelRadius + Math.cos(angle) * topBevelRadius;
             const y = penHeight - topBevelRadius + Math.sin(angle) * topBevelRadius;
-            points.push(new THREE.Vector2(x, y));
+            topPoints.push(new THREE.Vector2(x, y));
         }
         
-        const bodyGeo = new THREE.LatheGeometry(points, 32);
+        const topGeo = new THREE.LatheGeometry(topPoints, 32);
         
-        // Plastic material
-        const bodyMat = new THREE.MeshPhysicalMaterial({
-            color: config.color,
-            roughness: 0.25,
+        // Project UVs straight through (like real wood grain)
+        // Fixed: 90° rotation, 0.2 scale, X offset 0.65
+        const uvAttr = topGeo.attributes.uv;
+        const posAttr = topGeo.attributes.position;
+        const woodAngle = Math.PI / 2;
+        const woodScale = 0.2;
+        const woodOffsetX = 0.65;
+        for (let j = 0; j < uvAttr.count; j++) {
+            const x = posAttr.getX(j);
+            const y = posAttr.getY(j);
+            const u = x * 0.5 + 0.5;
+            const v = y * 0.3;
+            const cu = u - 0.5;
+            const cv = v - 0.5;
+            const ru = cu * Math.cos(woodAngle) - cv * Math.sin(woodAngle);
+            const rv = cu * Math.sin(woodAngle) + cv * Math.cos(woodAngle);
+            uvAttr.setXY(j, (ru + 0.5) * woodScale + woodOffsetX, (rv + 0.5) * woodScale);
+        }
+        uvAttr.needsUpdate = true;
+        
+        // Wood material
+        const penWoodTexture = woodTexture.clone();
+        penWoodTexture.needsUpdate = true;
+        penWoodTexture.wrapS = THREE.RepeatWrapping;
+        penWoodTexture.wrapT = THREE.RepeatWrapping;
+        
+        const woodMat = new THREE.MeshStandardMaterial({
+            map: penWoodTexture,
+            roughness: 0.5,
             metalness: 0.0,
-            clearcoat: 0.6,
-            clearcoatRoughness: 0.25,
-            reflectivity: 0.5,
-            envMapIntensity: 0.8
+            envMapIntensity: 0.2
         });
         
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        body.castShadow = true;
-        body.receiveShadow = true;
-        penGroup.add(body);
+        const topBody = new THREE.Mesh(topGeo, woodMat);
+        topBody.castShadow = true;
+        topBody.receiveShadow = true;
+        topBody.userData.isWoodSection = true;
+        topBody.userData.woodStartHeight = woodStartHeight;
+        topBody.userData.penHeight = penHeight;
+        penGroup.add(topBody);
         
         // Black screen cap on top of pen with number
         const topCapRadius = penRadius - topBevelRadius; // Inner radius at top of bevel
@@ -964,6 +1035,7 @@ function setupLightingControls() {
             paintRotValue.textContent = value + '°';
         });
     }
+    
 }
 
 function rebakeCubeCamera() {
